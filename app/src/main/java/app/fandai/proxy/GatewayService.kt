@@ -47,7 +47,12 @@ class GatewayService : Service() {
                 .build()
         }
         startForeground(NOTIFICATION_ID, notification)
+    }
+
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        server?.stop()
         startGateway()
+        return START_NOT_STICKY
     }
 
     private fun startGateway() {
