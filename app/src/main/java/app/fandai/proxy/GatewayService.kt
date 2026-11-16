@@ -71,6 +71,8 @@ class GatewayService : Service() {
                         session.method == Method.GET && session.uri == "/v1/models" -> models(config)
                         session.method == Method.POST && session.uri == "/v1/chat/completions" ->
                             chatCompletions(session, config)
+                        session.uri == "/proxy" || session.uri.startsWith("/proxy/") ->
+                            proxyRequest(session, config)
                         else -> error(Response.Status.NOT_FOUND, "not_found", "Route not found")
                     }
                 } catch (e: IllegalArgumentException) {
@@ -143,6 +145,80 @@ class GatewayService : Service() {
         }
     }
 
+    /**
+     * Explicit reverse-proxy route:
+     * /proxy/{provider}/{upstream-path}?query
+     *
+     * The configured provider base URL is the only upstream host. Incoming
+     * Authorization is replaced with the provider's configured API key.
+     */
+    private fun proxyRequest(session: IHTTPSession, config: GatewayConfig): Response {
+        val route = session.uri.removePrefix("/proxy").trimStart('/')
+        val providerName = route.substringBefore('/')
+        require(providerName.isNotBlank()) { "Proxy route must include a provider name" }
+        val provider = config.providers[providerName]
+            ?: throw IllegalArgumentException("Unknown provider: $providerName")
+        val upstreamPath = route.substringAfter('/', "")
+        val target = buildString {
+            append(provider.baseUrl.trimEnd('/'))
+            if (upstreamPath.isNotEmpty()) {
+                append('/')
+                append(upstreamPath)
+            }
+            session.queryParameterString.takeIf { it.isNotBlank() }?.let {
+                append('?')
+                append(it)
+            }
+        }
+
+        val method = session.method.name
+        val contentType = session.headers["content-type"] ?: "application/octet-stream"
+        val requestBody = if (method == "GET" || method == "HEAD") {
+            null
+        } else {
+            val files = HashMap<String, String>()
+            session.parseBody(files)
+            (files["postData"] ?: "").toRequestBody(contentType.toMediaTypeOrNull())
+        }
+
+        val builder = Request.Builder().url(target)
+        session.headers.forEach { (name, value) ->
+            val normalized = name.lowercase()
+            if (normalized !in REQUEST_HOP_BY_HOP_HEADERS &&
+                normalized !in setOf("host", "content-length", "authorization", "proxy-authorization", "accept-encoding")
+            ) {
+                builder.header(name, value)
+            }
+        }
+        builder.header("Authorization", "Bearer ${provider.apiKey}")
+        builder.method(method, requestBody)
+
+        val upstreamResponse = client.newCall(builder.build()).execute()
+        val body = upstreamResponse.body
+        val status = Response.Status.lookup(upstreamResponse.code) ?: Response.Status.BAD_GATEWAY
+        if (body == null) {
+            upstreamResponse.close()
+            return NanoHTTPD.newFixedLengthResponse(status, "application/octet-stream", "")
+        }
+
+        val responseType = upstreamResponse.header("Content-Type") ?: "application/octet-stream"
+        val response = NanoHTTPD.newChunkedResponse(
+            status,
+            responseType,
+            ClosingInputStream(body.byteStream()) { upstreamResponse.close() }
+        )
+        for (index in 0 until upstreamResponse.headers.size) {
+            val name = upstreamResponse.headers.name(index)
+            val normalized = name.lowercase()
+            if (normalized !in RESPONSE_HOP_BY_HOP_HEADERS &&
+                normalized !in setOf("content-length", "content-encoding")
+            ) {
+                response.addHeader(name, upstreamResponse.headers.value(index))
+            }
+        }
+        return response
+    }
+
     private fun json(status: Response.IStatus, body: String): Response =
         NanoHTTPD.newFixedLengthResponse(status, "application/json; charset=utf-8", body)
 
@@ -187,5 +263,14 @@ class GatewayService : Service() {
         private const val SOCKET_READ_TIMEOUT = 5_000
         private const val CHANNEL_ID = "gateway"
         private const val NOTIFICATION_ID = 8765
+
+        private val REQUEST_HOP_BY_HOP_HEADERS = setOf(
+            "connection", "keep-alive", "proxy-authenticate", "proxy-authorization",
+            "te", "trailer", "transfer-encoding", "upgrade"
+        )
+        private val RESPONSE_HOP_BY_HOP_HEADERS = setOf(
+            "connection", "keep-alive", "proxy-authenticate", "proxy-authorization",
+            "te", "trailer", "transfer-encoding", "upgrade"
+        )
     }
 }
