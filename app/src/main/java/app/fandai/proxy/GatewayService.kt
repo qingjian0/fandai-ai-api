@@ -165,7 +165,7 @@ class GatewayService : Service() {
                 append('/')
                 append(upstreamPath)
             }
-            session.queryParameterString.takeIf { it.isNotBlank() }?.let {
+            session.queryParameterString?.takeIf { it.isNotBlank() }?.let {
                 append('?')
                 append(it)
             }
