@@ -195,7 +195,7 @@ class GatewayService : Service() {
 
         val upstreamResponse = client.newCall(builder.build()).execute()
         val body = upstreamResponse.body
-        val status = Response.Status.lookup(upstreamResponse.code) ?: Response.Status.BAD_GATEWAY
+        val status = Response.Status.lookup(upstreamResponse.code) ?: Response.Status.INTERNAL_ERROR
         if (body == null) {
             upstreamResponse.close()
             return NanoHTTPD.newFixedLengthResponse(status, "application/octet-stream", "")
