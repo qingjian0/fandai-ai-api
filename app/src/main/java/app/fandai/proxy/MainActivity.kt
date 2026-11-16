@@ -94,7 +94,9 @@ class MainActivity : Activity() {
         setContentView(ScrollView(this).apply { addView(content) })
     }
 
-    private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()\n\n    private fun lanAddress(): String {
+    private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
+
+    private fun lanAddress(): String {
         return try {
             val interfaces = Collections.list(NetworkInterface.getNetworkInterfaces())
             val address = interfaces.asSequence()
