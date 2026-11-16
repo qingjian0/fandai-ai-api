@@ -16,7 +16,7 @@ data class GatewayConfig(
         private const val CONFIG = "config"
 
         const val DEFAULT_JSON = """{
-  "gatewayKey": "change-this-local-key",
+  "gatewayKey": "replace-with-a-random-32-character-secret",
   "lanEnabled": false,
   "providers": {
     "provider_a": {
@@ -44,7 +44,7 @@ data class GatewayConfig(
         fun parse(raw: String): GatewayConfig {
             val root = JSONObject(raw)
             val gatewayKey = root.optString("gatewayKey").trim()
-            require(gatewayKey.length >= 12) { "gatewayKey 至少需要 12 个字符" }
+            require(gatewayKey.length >= 24 && !gatewayKey.startsWith("replace-")) { "gatewayKey 必须替换为至少 24 个字符的随机密钥" }
 
             val providersJson = root.optJSONObject("providers")
                 ?: throw IllegalArgumentException("缺少 providers 配置")
