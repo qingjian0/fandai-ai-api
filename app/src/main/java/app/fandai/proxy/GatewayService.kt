@@ -8,6 +8,8 @@ import android.content.Intent
 import android.os.Build
 import android.os.IBinder
 import fi.iki.elonen.NanoHTTPD
+import fi.iki.elonen.NanoHTTPD.Method
+import fi.iki.elonen.NanoHTTPD.Response
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
