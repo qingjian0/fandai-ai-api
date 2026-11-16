@@ -118,21 +118,21 @@ class GatewayService : Service() {
         val upstreamResponse = client.newCall(upstream).execute()
         val status = Response.Status.lookup(upstreamResponse.code) ?: Response.Status.INTERNAL_ERROR
         val body = upstreamResponse.body
-            ?: return error(Response.Status.BAD_GATEWAY, "empty_upstream_response", "Upstream returned an empty response")
+            ?: return error(Response.Status.INTERNAL_ERROR, "empty_upstream_response", "Upstream returned an empty response")
         val contentType = upstreamResponse.header("Content-Type") ?: "application/json"
         return if (contentType.contains("text/event-stream", ignoreCase = true)) {
-            newChunkedResponse(status, contentType, ClosingInputStream(body.byteStream()) {
+            NanoHTTPD.newChunkedResponse(status, contentType, ClosingInputStream(body.byteStream()) {
                 upstreamResponse.close()
             })
         } else {
             val text = body.string()
             upstreamResponse.close()
-            newFixedLengthResponse(status, contentType, text)
+            NanoHTTPD.newFixedLengthResponse(status, contentType, text)
         }
     }
 
     private fun json(status: Response.IStatus, body: String): Response =
-        newFixedLengthResponse(status, "application/json; charset=utf-8", body)
+        NanoHTTPD.newFixedLengthResponse(status, "application/json; charset=utf-8", body)
 
     private fun error(status: Response.IStatus, type: String, message: String): Response {
         val body = JSONObject().put(
