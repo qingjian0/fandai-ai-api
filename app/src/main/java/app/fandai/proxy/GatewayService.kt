@@ -79,8 +79,10 @@ class GatewayService : Service() {
 
     private fun authorized(session: IHTTPSession, expected: String): Boolean {
         val header = session.headers["authorization"] ?: return false
-        val supplied = header.removePrefix("Bearer ").trim()
-        if (supplied == header || supplied.isBlank()) return false
+        val prefix = "Bearer "
+        if (!header.regionMatches(0, prefix, 0, prefix.length, ignoreCase = true)) return false
+        val supplied = header.substring(prefix.length).trim()
+        if (supplied.isBlank()) return false
         return MessageDigest.isEqual(
             supplied.toByteArray(Charsets.UTF_8),
             expected.toByteArray(Charsets.UTF_8)
@@ -120,7 +122,10 @@ class GatewayService : Service() {
         val upstreamResponse = client.newCall(upstream).execute()
         val status = Response.Status.lookup(upstreamResponse.code) ?: Response.Status.INTERNAL_ERROR
         val body = upstreamResponse.body
-            ?: return error(Response.Status.INTERNAL_ERROR, "empty_upstream_response", "Upstream returned an empty response")
+        if (body == null) {
+            upstreamResponse.close()
+            return error(Response.Status.INTERNAL_ERROR, "empty_upstream_response", "Upstream returned an empty response")
+        }
         val contentType = upstreamResponse.header("Content-Type") ?: "application/json"
         return if (contentType.contains("text/event-stream", ignoreCase = true)) {
             NanoHTTPD.newChunkedResponse(status, contentType, ClosingInputStream(body.byteStream()) {
