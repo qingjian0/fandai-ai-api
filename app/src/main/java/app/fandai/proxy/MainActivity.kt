@@ -54,8 +54,7 @@ class MainActivity : Activity() {
             setPadding(12, 12, 12, 12)
             layoutParams = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
-                0,
-                1f
+                dp(380)
             )
         }
         content.addView(configEditor)
@@ -95,7 +94,7 @@ class MainActivity : Activity() {
         setContentView(ScrollView(this).apply { addView(content) })
     }
 
-    private fun lanAddress(): String {
+    private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()\n\n    private fun lanAddress(): String {
         return try {
             val interfaces = Collections.list(NetworkInterface.getNetworkInterfaces())
             val address = interfaces.asSequence()
