@@ -1,79 +1,94 @@
 package app.gptdynamichook.core.report
 
-/**
- * Extracts bounded, key-only metadata from the textual shape of known request
- * and response objects. Callers must never persist or log the input string.
- */
+/** Extracts metadata without calling toString() on target-app objects. */
 object HookResultParser {
     private val classPattern = Regex("^[A-Za-z_$][A-Za-z0-9_$.]*$")
     private val memberPattern = Regex("^[A-Za-z_$][A-Za-z0-9_$]*$")
+    private val hostPattern = Regex("^[A-Za-z0-9.-]{1,253}$")
+    private val headerPattern = Regex("^[A-Za-z0-9!#$%&'*+.^_\u0060|~-]{1,64}$")
     private val statusPattern = Regex("^[1-5][0-9]{2}$")
-    private val headerFieldPattern = Regex("^[A-Za-z0-9!#$%&'*+.^_\u0060|~-]{1,64}$")
-    private val authSchemePattern = Regex("^(Bearer|Basic|Digest|MAC|AWS4-HMAC-SHA256)$")
 
-    fun parseKeyOnly(raw: String?): HookResult {
-        val text = raw ?: return HookResult()
-        if (text.isEmpty()) return HookResult()
-        val firstLine = text.substringBefore('\n')
-        val className = firstLine.substringBefore(' ')
-        if (!classPattern.matches(className)) return HookResult(byteLength = text.length.toLong())
+    /**
+     * Reads only documented, value-free accessors from OkHttp Request/Response.
+     * Unknown objects are represented by their class name only.
+     */
+    fun parseObject(value: Any?): HookResult {
+        if (value == null) return HookResult()
+        if (value is ByteArray) return HookResult(byteLength = value.size.toLong())
 
-        val urlIndex = text.indexOf("\nurl=")
-        val headerIndex = text.indexOf("\nheaders=[")
-        if (urlIndex > 0 && headerIndex > urlIndex) {
-            val method = firstLine.substringAfter(' ', "")
-            val host = extractUrlHost(text.substring(urlIndex + 5, headerIndex))
-            val headers = extractHeaderFieldNames(text.substring(headerIndex + 10))
-            return HookResult(
-                shape = className,
-                shapeClass = className,
-                bodyKind = method.takeIf(memberPattern::matches),
-                byteLength = text.length.toLong(),
-                elementCount = headers.size.toLong(),
-                urlHost = host,
-                fieldNames = headers
-            )
+        val className = value.javaClass.name
+        if (!classPattern.matches(className)) return HookResult()
+        return when (className) {
+            "okhttp3.Request" -> {
+                val method = invokeNoArg(value, "method") as? String
+                val url = invokeNoArg(value, "url")
+                val host = url?.let { invokeNoArg(it, "host") as? String }
+                val headers = invokeNoArg(value, "headers")
+                requestMetadata(className, method, host, readHeaderNames(headers))
+            }
+            "okhttp3.Response" -> {
+                val code = (invokeNoArg(value, "code") as? Number)?.toInt()?.toString()
+                val headers = invokeNoArg(value, "headers")
+                responseMetadata(className, code, readHeaderNames(headers))
+            }
+            else -> HookResult(shape = className)
         }
-
-        val responseHeaderIndex = text.indexOf("\nheaders=[")
-        if (responseHeaderIndex > 0) {
-            val statusToken = Regex("(?:^|\\s)status=([0-9]{3})(?:\\s|$)")
-                .find(firstLine)?.groupValues?.getOrNull(1)
-            val headers = extractHeaderFieldNames(text.substring(responseHeaderIndex + 10))
-            return HookResult(
-                shape = className,
-                byteLength = text.length.toLong(),
-                elementCount = headers.size.toLong(),
-                status = statusToken?.takeIf(statusPattern::matches),
-                fieldNames = headers
-            )
-        }
-        return HookResult(shape = className, byteLength = text.length.toLong())
     }
 
-    private fun extractUrlHost(section: String): String? {
-        val url = section.substringBefore('\n')
-        val authorityStart = url.indexOf("://")
-        val start = if (authorityStart >= 0) authorityStart + 3 else 0
-        if (start >= url.length) return null
-        val tail = url.substring(start)
-        val host = tail.substringBefore('/').substringBefore('?').substringAfterLast('@')
-        if (host.length > 253) return null
-        if (!Regex("^[A-Za-z0-9.-]+(:[0-9]{1,5})?$").matches(host)) return null
-        return host.substringBefore(':')
+    fun requestMetadata(
+        className: String,
+        method: String?,
+        host: String?,
+        headerNames: Iterable<String>
+    ): HookResult {
+        val safeNames = sanitizeHeaderNames(headerNames)
+        return HookResult(
+            shape = className.takeIf(classPattern::matches),
+            shapeClass = className.takeIf(classPattern::matches),
+            bodyKind = method?.takeIf(memberPattern::matches),
+            elementCount = safeNames.size.toLong(),
+            urlHost = host?.takeIf(hostPattern::matches),
+            fieldNames = safeNames
+        )
     }
 
-    private fun extractHeaderFieldNames(section: String): List<String> {
-        val end = section.lastIndexOf(']')
-        val inner = if (end >= 0) section.substring(0, end) else section
-        return inner.split(',')
-            .map { it.trim() }
-            .filter { it.contains('=') }
-            .map { it.substringBefore('=').trim() }
-            .filter { headerFieldPattern.matches(it) && !authSchemePattern.matches(it) }
+    fun responseMetadata(
+        className: String,
+        status: String?,
+        headerNames: Iterable<String>
+    ): HookResult {
+        val safeNames = sanitizeHeaderNames(headerNames)
+        return HookResult(
+            shape = className.takeIf(classPattern::matches),
+            status = status?.takeIf(statusPattern::matches),
+            elementCount = safeNames.size.toLong(),
+            fieldNames = safeNames
+        )
+    }
+
+    private fun invokeNoArg(target: Any, name: String): Any? =
+        runCatching { target.javaClass.getMethod(name).invoke(target) }.getOrNull()
+
+    private fun readHeaderNames(headers: Any?): List<String> {
+        if (headers == null) return emptyList()
+        val size = (invokeNoArg(headers, "size") as? Number)?.toInt()
+            ?.coerceIn(0, MAX_HEADER_SCAN) ?: return emptyList()
+        val nameMethod = headers.javaClass.methods.firstOrNull {
+            it.name == "name" &&
+                it.parameterTypes.size == 1 &&
+                it.parameterTypes[0] == Int::class.javaPrimitiveType
+        } ?: return emptyList()
+        return (0 until size).mapNotNull { index ->
+            runCatching { nameMethod.invoke(headers, index) as? String }.getOrNull()
+        }
+    }
+
+    private fun sanitizeHeaderNames(names: Iterable<String>): List<String> =
+        names.asSequence()
+            .filter(headerPattern::matches)
             .distinct()
             .take(HookEventCollector.MAX_FIELDS)
-    }
+            .toList()
 
     data class HookResult(
         val shape: String? = null,
@@ -85,4 +100,6 @@ object HookResultParser {
         val urlHost: String? = null,
         val fieldNames: List<String> = emptyList()
     )
+
+    private const val MAX_HEADER_SCAN = 64
 }
