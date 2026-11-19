@@ -72,15 +72,13 @@ internal data class PackageIdentity(
                 @Suppress("DEPRECATION")
                 signatures?.toList().orEmpty()
             }
-            if (certificates.isEmpty()) return null
-            // The pin format stores one digest. For multi-signer APKs use a
-            // deterministic digest so the same installed identity is stable.
-            val digests = certificates.map { signature ->
-                MessageDigest.getInstance("SHA-256")
-                    .digest(signature.toByteArray())
-                    .joinToString("") { byte -> "%02x".format(byte) }
-            }.sorted()
-            return digests.firstOrNull()
+            // The current profile schema stores exactly one signer digest.
+            // A multi-signer package cannot be represented without ambiguity;
+            // return null so any configured signer pin fails closed.
+            if (certificates.size != 1) return null
+            return MessageDigest.getInstance("SHA-256")
+                .digest(certificates.single().toByteArray())
+                .joinToString("") { byte -> "%02x".format(byte) }
         }
     }
 }
