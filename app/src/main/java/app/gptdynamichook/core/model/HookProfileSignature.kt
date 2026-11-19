@@ -9,7 +9,7 @@ object HookProfileSignature {
         appendField(profile.className)
         appendField(profile.methodName)
         append(profile.parameterTypeNames.size).append(':')
-        profile.parameterTypeNames.forEach(::appendField)
+        profile.parameterTypeNames.forEach { appendField(it) }
     }
 
     private fun StringBuilder.appendField(value: String) {
