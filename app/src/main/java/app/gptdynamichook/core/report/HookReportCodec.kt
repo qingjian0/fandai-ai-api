@@ -51,7 +51,7 @@ object HookReportCodec {
             root.remove("events")
             encoded = root.toString()
         }
-        if (encoded.length > MAX_ENCODED_LENGTH) {
+        if (encoded.toByteArray(Charsets.UTF_8).size > MAX_ENCODED_LENGTH) {
             return JSONObject()
                 .put("schemaVersion", SCHEMA_VERSION)
                 .put("targetPackage", targetPackage)
