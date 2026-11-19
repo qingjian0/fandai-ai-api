@@ -16,6 +16,8 @@ object HookProfileCodec {
                     .put("methodName", profile.methodName)
                     .put("parameterTypeNames", JSONArray(profile.parameterTypeNames))
                     .put("enabled", profile.enabled)
+                    .put("targetVersionCode", profile.targetVersionCode ?: JSONObject.NULL)
+                    .put("targetSignerSha256", profile.targetSignerSha256 ?: JSONObject.NULL)
             )
         }
         return array.toString()
@@ -41,7 +43,17 @@ object HookProfileCodec {
                                     add(params.getString(parameterIndex))
                                 }
                             },
-                            enabled = item.optBoolean("enabled", false)
+                            enabled = item.optBoolean("enabled", false),
+                            targetVersionCode = if (item.isNull("targetVersionCode")) {
+                                null
+                            } else {
+                                item.optLong("targetVersionCode", 0L)
+                            },
+                            targetSignerSha256 = if (item.isNull("targetSignerSha256")) {
+                                null
+                            } else {
+                                item.optString("targetSignerSha256", "").ifBlank { null }
+                            }
                         )
                     )
                 }
