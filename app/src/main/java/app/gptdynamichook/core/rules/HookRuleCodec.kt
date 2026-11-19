@@ -67,7 +67,9 @@ object HookRuleCodec {
                             rewriteArgs = rewriteArgs,
                             rewriteResult = rewrite?.optString("result", "")?.takeIf { it.isNotEmpty() },
                             rewriteSkip = rewrite?.optBoolean("skip", false) == true,
-                            rewriteDryRun = rewrite?.optBoolean("dryRun", false) == true
+                            rewriteDryRun = rewrite?.optBoolean("dryRun", false) == true,
+                            expose = item.optString("expose", "").let { v -> if (v.length <= 32 && Regex("^[A-Za-z0-9_-]*$").matches(v)) v else "" },
+                            exposeTarget = item.optString("exposeTarget", "self")
                         )
                     )
                 }
