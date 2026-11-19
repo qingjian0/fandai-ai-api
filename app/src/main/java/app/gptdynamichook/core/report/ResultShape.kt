@@ -52,7 +52,7 @@ object ResultShape {
                 for ((k, v) in value) {
                     if (n >= options.maxMembers) { append(",..."); break }
                     if (n > 0) append(',')
-                    append(clean(k?.toString()))
+                    append(clean(k?.toString(), options))
                     append(':')
                     describeInto(v, depth + 1, options)
                     n++
@@ -106,7 +106,7 @@ object ResultShape {
         append('{')
         methods.forEachIndexed { index, method ->
             if (index > 0) append(',')
-            append(clean(method.name))
+            append(clean(method.name, options))
             val type = method.returnType
             append(':').append(type.name.substringAfterLast('.'))
         }
@@ -118,7 +118,7 @@ object ResultShape {
         append(name.substringAfterLast('.'))
     }
 
-    private fun clean(name: String?): String {
+    private fun clean(name: String?, options: Options): String {
         if (name == null) return "null"
         val trimmed = name.replace('\n', ' ').replace('\r', ' ').replace('"', '\'')
         return if (trimmed.length <= options.maxNameLength) trimmed else trimmed.take(options.maxNameLength)
