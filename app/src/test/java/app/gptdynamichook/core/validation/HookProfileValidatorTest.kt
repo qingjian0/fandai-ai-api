@@ -88,4 +88,40 @@ class HookProfileValidatorTest {
         assertTrue(HookProfileValidator.matchesTarget(profile, "com.openai.chatgpt"))
         assertEquals(false, HookProfileValidator.matchesTarget(profile, "com.other.app"))
     }
+    @Test
+    fun rejectsMalformedPinningFields() {
+        val base = HookProfile(
+            id = "pinned",
+            targetPackage = "com.openai.chatgpt",
+            className = "com.example.Client",
+            methodName = "send",
+            parameterTypeNames = listOf("java.lang.String")
+        )
+        assertTrue(
+            HookProfileValidator.validate(base.copy(targetVersionCode = 0L))
+                .contains("invalid_target_version_code")
+        )
+        assertTrue(
+            HookProfileValidator.validate(base.copy(targetSignerSha256 = "ABC"))
+                .contains("invalid_target_signer_sha256")
+        )
+        assertTrue(
+            HookProfileValidator.validate(base.copy(targetSignerSha256 = "A".repeat(64)))
+                .contains("invalid_target_signer_sha256")
+        )
+    }
+
+    @Test
+    fun acceptsValidPinningFields() {
+        val pinned = HookProfile(
+            id = "pinned",
+            targetPackage = "com.openai.chatgpt",
+            className = "com.example.Client",
+            methodName = "send",
+            parameterTypeNames = listOf("java.lang.String"),
+            targetVersionCode = 4210L,
+            targetSignerSha256 = "f".repeat(64)
+        )
+        assertTrue(HookProfileValidator.validate(pinned).isEmpty())
+    }
 }
