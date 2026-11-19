@@ -29,12 +29,14 @@
 
 ## 构建
 
-需要 JDK 17、Android SDK 35 和 Gradle 8.9：
+需要 JDK 17、Android SDK 37 Preview 和 Gradle 9.3.1。当前 CI 使用 Android 17 Preview 平台：
 
 ```bash
 gradle assembleDebug
 gradle testDebugUnitTest
 ```
+
+JVM 单元测试使用独立的 `org.json` 测试依赖；APK 运行时仍使用 Android 平台 JSON 实现。
 
 ## 安全边界
 
