@@ -7,6 +7,7 @@ object HookResultParser {
     private val hostPattern = Regex("^[A-Za-z0-9.-]{1,253}$")
     private val headerPattern = Regex("^[A-Za-z0-9!#$%&'*+.^_\u0060|~-]{1,64}$")
     private val statusPattern = Regex("^[1-5][0-9]{2}$")
+    private val argumentTypePattern = Regex("^[A-Za-z_$][A-Za-z0-9_$.]*(\\[\\])*$")
 
     /**
      * Reads only documented, value-free accessors from OkHttp Request/Response.
@@ -33,6 +34,26 @@ object HookResultParser {
             }
             else -> HookResult(shape = className)
         }
+    }
+
+    /**
+     * Captures only argument runtime type names and count. Argument values,
+     * toString(), fields and arbitrary getters are never inspected.
+     */
+    fun parseArguments(arguments: List<Any?>): HookResult {
+        val types = arguments.take(MAX_ARGUMENTS).map { value ->
+            if (value == null) {
+                "null"
+            } else {
+                val name = value.javaClass.canonicalName ?: value.javaClass.name
+                name.takeIf(argumentTypePattern::matches) ?: "unknown"
+            }
+        }
+        return HookResult(
+            shape = "arguments",
+            elementCount = arguments.size.toLong(),
+            argumentTypes = types
+        )
     }
 
     fun requestMetadata(
@@ -98,8 +119,10 @@ object HookResultParser {
         val elementCount: Long? = null,
         val status: String? = null,
         val urlHost: String? = null,
-        val fieldNames: List<String> = emptyList()
+        val fieldNames: List<String> = emptyList(),
+        val argumentTypes: List<String> = emptyList()
     )
 
     private const val MAX_HEADER_SCAN = 64
+    private const val MAX_ARGUMENTS = 16
 }
