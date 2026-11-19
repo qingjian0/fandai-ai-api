@@ -2,6 +2,7 @@ package app.gptdynamichook
 
 import android.app.Activity
 import android.app.AlertDialog
+import android.net.Uri
 import android.os.Bundle
 import android.view.ViewGroup
 import android.widget.Button
@@ -15,6 +16,9 @@ import app.gptdynamichook.core.model.HookProfile
 import app.gptdynamichook.core.store.ProfileStore
 import app.gptdynamichook.core.validation.HookProfileValidator
 import io.github.libxposed.service.XposedService
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import java.util.UUID
 
 class MainActivity : Activity(), App.ServiceStateListener {
@@ -25,6 +29,7 @@ class MainActivity : Activity(), App.ServiceStateListener {
     private lateinit var parametersInput: EditText
     private lateinit var enabledInput: CheckBox
     private lateinit var profilesContainer: LinearLayout
+    private lateinit var reportView: TextView
     private var service: XposedService? = null
     private var editingProfileId: String? = null
     private var profileLoadGeneration = 0
@@ -38,6 +43,7 @@ class MainActivity : Activity(), App.ServiceStateListener {
     override fun onStart() {
         super.onStart()
         app.addServiceStateListener(this)
+        renderReport()
     }
 
     override fun onStop() {
@@ -109,7 +115,49 @@ class MainActivity : Activity(), App.ServiceStateListener {
             textSize = 13f
             setPadding(0, 18, 0, 0)
         })
+        content.addView(TextView(this).apply {
+            text = "观察报告"
+            textSize = 19f
+            setPadding(0, 32, 0, 8)
+        })
+        reportView = TextView(this).apply {
+            text = "尚无报告。启用 Profile 并触发目标方法后点“刷新观察报告”。"
+            textSize = 12f
+        }
+        content.addView(reportView)
+        content.addView(Button(this).apply {
+            text = "刷新观察报告"
+            setOnClickListener { renderReport() }
+        })
+        content.addView(Button(this).apply {
+            text = "清空观察报告"
+            setOnClickListener { clearReport() }
+        })
         setContentView(scroll)
+    }
+
+    private fun renderReport() {
+        val snapshot = ObservationProvider.snapshot()
+        val report = snapshot.first
+        if (report.isNullOrBlank()) {
+            reportView.text = "尚无报告。目标进程尚未回传，或该进程未加载本模块。"
+            return
+        }
+        val stamp = if (snapshot.second > 0L) {
+            SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date(snapshot.second))
+        } else {
+            "-"
+        }
+        reportView.text = "收到 " + snapshot.third + " 次 · 最近 " + stamp + "\n\n" + report
+    }
+
+    private fun clearReport() {
+        runCatching {
+            val uri = Uri.parse("content://" + ObservationProvider.AUTHORITY + "/report")
+            contentResolver.call(uri, ObservationProvider.METHOD_CLEAR, null, null)
+        }
+        renderReport()
+        toast("观察报告已清空")
     }
 
     private fun field(parent: ViewGroup, hint: String, value: String): EditText {
