@@ -47,9 +47,9 @@ class MainActivity : Activity(), App.ServiceStateListener {
     }
 
     override fun onServiceStateChanged(service: XposedService?) {
-        this.service = service
         runOnUiThread {
             if (isFinishing || isDestroyed) return@runOnUiThread
+            this.service = service
             status.text = if (service == null) {
                 "LSPosed 服务未连接。请确认已安装兼容的 LSPosed/libxposed 框架并启用本模块。"
             } else {
