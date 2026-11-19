@@ -42,6 +42,7 @@ class ModuleEntry : XposedModule() {
     private val packageLocks = ConcurrentHashMap<String, Any>()
     @Volatile private var ruleEngine: RuleEngine? = null
     @Volatile private var ruleWatcher: RuleWatcher? = null
+    @Volatile private var channelWatcher: ChannelWatcher? = null
     private val preferenceListeners = ConcurrentHashMap<String, SharedPreferences.OnSharedPreferenceChangeListener>()
 
     override fun onModuleLoaded(param: ModuleLoadedParam) {
@@ -95,7 +96,14 @@ class ModuleEntry : XposedModule() {
         if (ruleWatcher != null) return
         val rulesFile = RuleWatcher.rulesFileFor(packageName)
         val reportFile = RuleWatcher.reportFileFor(packageName)
-        val engine = RuleEngine(this, reportFile) { line -> log(Log.INFO, TAG, line) }
+        // Reflective command channel: the module compiles once, then an operator
+        // drives exploration with JSON commands instead of new builds.
+        val channel = ChannelWatcher(packageName, classLoader) { line -> log(Log.INFO, TAG, line) }
+        channel.start()
+        channelWatcher = channel
+        val engine = RuleEngine(this, reportFile, { line -> log(Log.INFO, TAG, line) }) { name, value ->
+            channel.expose(name, value)
+        }
         ruleEngine = engine
         val watcher = RuleWatcher(
             packageName = packageName,
