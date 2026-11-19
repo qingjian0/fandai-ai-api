@@ -83,7 +83,7 @@ class ModuleEntry : XposedModule() {
                     desired[key]?.let(::signatureOf) != registration.signature
             }
             .forEach { entry ->
-                installed.remove(entry.key, entry.value)?.handle?.unhook()
+                if (installed.remove(entry.key, entry.value)) entry.value.handle.unhook()
             }
 
         active.forEach { profile ->
