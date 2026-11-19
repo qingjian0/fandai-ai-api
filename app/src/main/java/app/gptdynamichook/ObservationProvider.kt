@@ -6,8 +6,11 @@ import android.database.Cursor
 import android.net.Uri
 import android.os.Binder
 import android.os.Bundle
+import android.util.AtomicFile
 import android.util.Log
 import org.json.JSONObject
+import java.io.File
+import java.io.FileOutputStream
 
 /**
  * Receives sanitized observation reports from the hooked target process and
@@ -15,10 +18,31 @@ import org.json.JSONObject
  *
  * publish is limited to the configured target UID and a schema-v1 payload
  * whose declared target matches the authorized package. read/clear are
- * restricted to the module app UID.
+ * restricted to the module app UID. Accepted reports are atomically persisted
+ * so an app-process restart does not silently erase the latest observation.
  */
 class ObservationProvider : ContentProvider() {
-    override fun onCreate(): Boolean = true
+    override fun onCreate(): Boolean {
+        val appContext = context ?: return false
+        synchronized(lock) {
+            val file = File(appContext.filesDir, REPORT_FILE_NAME)
+            if (file.isFile && file.length() in 1..MAX_REPORT_BYTES.toLong()) {
+                val restored = runCatching {
+                    AtomicFile(file).openRead().bufferedReader(Charsets.UTF_8).use { it.readText() }
+                }.getOrNull()
+                if (restored != null && isValidSchema(restored, TARGET_PACKAGE)) {
+                    latestReport = restored
+                    publishedAt = file.lastModified()
+                    publishCount = 1
+                } else {
+                    AtomicFile(file).delete()
+                }
+            } else if (file.exists()) {
+                AtomicFile(file).delete()
+            }
+        }
+        return true
+    }
 
     override fun call(method: String, arg: String?, extras: Bundle?): Bundle {
         val caller = Binder.getCallingUid()
@@ -42,21 +66,45 @@ class ObservationProvider : ContentProvider() {
             Log.w(TAG, "publish rejected for unauthorized caller")
             return denied("caller is not the configured target package")
         }
+        if (!isValidSchema(payload, declaredTarget)) {
+            return denied("invalid report schema or target package")
+        }
 
-        val validSchema = runCatching {
-            val root = JSONObject(payload)
-            root.optInt("schemaVersion", -1) == SCHEMA_VERSION &&
-                root.optString("targetPackage") == declaredTarget
-        }.getOrDefault(false)
-        if (!validSchema) return denied("invalid report schema or target package")
-
+        val appContext = context ?: return denied("provider context unavailable")
         synchronized(lock) {
+            if (!persistAtomically(appContext.filesDir, payload)) {
+                return denied("report persistence failed")
+            }
             latestReport = payload
             publishedAt = System.currentTimeMillis()
             publishCount += 1
         }
         return Bundle().apply { putBoolean(KEY_ACCEPTED, true) }
     }
+
+    private fun persistAtomically(directory: File, payload: String): Boolean {
+        val atomicFile = AtomicFile(File(directory, REPORT_FILE_NAME))
+        var stream: FileOutputStream? = null
+        return try {
+            stream = atomicFile.startWrite()
+            stream.write(payload.toByteArray(Charsets.UTF_8))
+            stream.fd.sync()
+            atomicFile.finishWrite(stream)
+            true
+        } catch (failure: Throwable) {
+            stream?.let(atomicFile::failWrite)
+            Log.w(TAG, "report persistence failed: ${failure.javaClass.simpleName}")
+            false
+        }
+    }
+
+    private fun isValidSchema(payload: String, declaredTarget: String): Boolean =
+        runCatching {
+            val root = JSONObject(payload)
+            root.optInt("schemaVersion", -1) == SCHEMA_VERSION &&
+                root.optString("targetPackage") == declaredTarget &&
+                declaredTarget == TARGET_PACKAGE
+        }.getOrDefault(false)
 
     private fun read(caller: Int): Bundle {
         if (caller != ownUid()) return denied("read is restricted to the module app")
@@ -71,7 +119,9 @@ class ObservationProvider : ContentProvider() {
 
     private fun clear(caller: Int): Bundle {
         if (caller != ownUid()) return denied("clear is restricted to the module app")
+        val appContext = context ?: return denied("provider context unavailable")
         synchronized(lock) {
+            AtomicFile(File(appContext.filesDir, REPORT_FILE_NAME)).delete()
             latestReport = null
             publishedAt = 0L
             publishCount = 0
@@ -121,6 +171,7 @@ class ObservationProvider : ContentProvider() {
     companion object {
         private const val TAG = "ObservationProvider"
         private const val TARGET_PACKAGE = "com.openai.chatgpt"
+        private const val REPORT_FILE_NAME = "latest-observation-v1.json"
         private const val MAX_REPORT_BYTES = 64 * 1024
         private const val SCHEMA_VERSION = 1
 
