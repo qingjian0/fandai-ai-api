@@ -19,6 +19,7 @@
 - 运行时按类名、方法名和参数类型解析方法。
 - Profile 集合按稳定 ID 执行 upsert、删除和启停，具备纯 JVM 单元测试。
 - UI 支持 Profile 列表、新建、编辑、删除、启用/禁用。
+- Profile 远程读写在单线程后台队列执行，避免阻塞主线程并保持 UI 写入顺序。
 - 仅对显式启用且完全匹配的 Profile 安装 pass-through Hook。
 
 ## 当前限制
@@ -38,6 +39,8 @@ gradle testDebugUnitTest
 ```
 
 JVM 单元测试使用独立的 `org.json` 测试依赖；APK 运行时仍使用 Android 平台 JSON 实现。
+
+CI 对同一分支或 PR 的新提交取消过期运行，并设置 25 分钟作业超时，避免旧提交长期占用构建资源。
 
 ## 安全边界
 
