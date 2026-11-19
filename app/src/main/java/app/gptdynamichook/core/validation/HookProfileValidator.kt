@@ -3,12 +3,13 @@ package app.gptdynamichook.core.validation
 import app.gptdynamichook.core.model.HookProfile
 
 object HookProfileValidator {
+    private val idPattern = Regex("^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$")
     private val packagePattern = Regex("^[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_]*)+$")
     private val classPattern = Regex("^[A-Za-z_$][A-Za-z0-9_$.]*$")
     private val memberPattern = Regex("^[A-Za-z_$][A-Za-z0-9_$]*$")
 
     fun validate(profile: HookProfile): List<String> = buildList {
-        if (profile.id.isBlank() || profile.id.length > 80) add("invalid_profile_id")
+        if (!idPattern.matches(profile.id)) add("invalid_profile_id")
         if (!packagePattern.matches(profile.targetPackage)) add("invalid_target_package")
         if (!classPattern.matches(profile.className)) add("invalid_class_name")
         if (!memberPattern.matches(profile.methodName)) add("invalid_method_name")
