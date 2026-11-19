@@ -25,7 +25,8 @@ import java.util.concurrent.atomic.AtomicLong
 class RuleEngine(
     private val module: XposedModule,
     private val reportFile: File,
-    private val log: (String) -> Unit
+    private val log: (String) -> Unit,
+    private val onExpose: (String, Any?) -> Unit = { _, _ -> }
 ) {
     private class Installed(val key: String, val handle: XposedInterface.HookHandle)
 
@@ -102,6 +103,7 @@ class RuleEngine(
                 .intercept { chain ->
                     val started = System.nanoTime()
                     try {
+                        if (rule.expose.isNotEmpty()) exposeTarget(rule, chain, local)
                         val rewritten = applyRewrite(rule, chain, method, local)
                         val result = if (rewritten.skipOriginal) {
                             rewritten.value
@@ -124,6 +126,16 @@ class RuleEngine(
             log("[rule:${rule.id}] install failed: $local (${it.javaClass.simpleName})")
             false
         }
+    }
+
+    private fun exposeTarget(rule: HookRule, chain: XposedInterface.Chain, target: String) {
+        val value = when (rule.exposeTarget) {
+            "result" -> null
+            "arg0" -> runCatching { chain.getArg(0) }.getOrNull()
+            else -> chain.getThisObject()
+        } ?: return
+        onExpose(rule.expose, value)
+        log("[expose] " + rule.expose + " <- " + value.javaClass.name)
     }
 
     private class RewriteOutcome(
