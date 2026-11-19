@@ -17,8 +17,9 @@
 - 通过 libxposed Remote Preferences 在模块 UI 与目标进程之间共享 Profile。
 - Profile JSON 编解码、字段校验、精确包名匹配。
 - 运行时按类名、方法名和参数类型解析方法。
+- Profile 集合按稳定 ID 执行 upsert、删除和启停，具备纯 JVM 单元测试。
+- UI 支持 Profile 列表、新建、编辑、删除、启用/禁用。
 - 仅对显式启用且完全匹配的 Profile 安装 pass-through Hook。
-- Profile 更新时移除已禁用/删除的 Hook；API 102 使用稳定 Hook ID。
 
 ## 当前限制
 
