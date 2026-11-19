@@ -29,4 +29,23 @@ class HookProfileCodecTest {
     fun missingConfigurationIsEmpty() {
         assertEquals(emptyList<HookProfile>(), HookProfileCodec.decode(null))
     }
+    @Test
+    fun oversizedPayloadFailsClosedBeforeJsonParsing() {
+        assertEquals(emptyList<HookProfile>(), HookProfileCodec.decode(" ".repeat(1_048_577)))
+    }
+
+    @Test
+    fun excessiveProfileCountFailsClosed() {
+        val profiles = (0..512).map { index ->
+            HookProfile(
+                id = "profile-$index",
+                targetPackage = "com.example.client",
+                className = "com.example.Client",
+                methodName = "send",
+                parameterTypeNames = emptyList()
+            )
+        }
+        assertEquals(emptyList<HookProfile>(), HookProfileCodec.decode(HookProfileCodec.encode(profiles)))
+    }
+
 }
