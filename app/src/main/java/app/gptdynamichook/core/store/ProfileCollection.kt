@@ -17,4 +17,8 @@ object ProfileCollection {
     ): List<HookProfile> = profiles.map {
         if (it.id == profileId) it.copy(enabled = enabled) else it
     }
+
+    /** Runtime installation must consume only explicitly enabled profiles. */
+    fun enabledOnly(profiles: List<HookProfile>): List<HookProfile> =
+        profiles.filter(HookProfile::enabled)
 }
