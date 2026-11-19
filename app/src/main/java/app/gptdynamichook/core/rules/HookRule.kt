@@ -23,5 +23,13 @@ data class HookRule(
     /** Number of parameters recorded by type only; values are never read. */
     val captureArgTypes: Int = 0,
     val sampleEvery: Int = 1,
-    val maxHooks: Int = 64
+    val maxHooks: Int = 64,
+    /** Argument index -> literal replacement. Values are operator-supplied, never app data. */
+    val rewriteArgs: Map<Int, String> = emptyMap(),
+    /** Literal returned instead of the original result (or instead of calling it when [rewriteSkip]). */
+    val rewriteResult: String? = null,
+    /** Skip the original method entirely and return [rewriteResult]. */
+    val rewriteSkip: Boolean = false,
+    /** Log the decision without changing anything; used to verify a rewrite safely. */
+    val rewriteDryRun: Boolean = false
 )
