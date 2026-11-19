@@ -3,6 +3,7 @@ package app.gptdynamichook.core.report
 import app.gptdynamichook.core.model.HookProfile
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -41,6 +42,37 @@ class HookReportCodecTest {
         assertEquals(1, root.getInt("schemaVersion"))
         assertEquals("com.openai.chatgpt", root.getString("targetPackage"))
         assertTrue(root.getJSONArray("events").length() <= 32)
+    }
+
+
+    @Test
+    fun acknowledgedSnapshotPreservesEventsRecordedAfterSnapshot() {
+        val collector = HookEventCollector(capacity = 8)
+        collector.record(profile, 1L, "ok", null)
+        val captured = collector.snapshot()
+
+        collector.record(profile, 2L, "ok", null)
+        collector.acknowledge(captured)
+
+        val remaining = collector.snapshot()
+        assertEquals(1, remaining.events.size)
+        assertEquals(2L, remaining.events.single().elapsedMs)
+        assertEquals(1L, remaining.counts["p1|ok"])
+        assertFalse(collector.isEmpty())
+    }
+
+    @Test
+    fun failedTransportCanRetrySameSnapshotWithoutLosingData() {
+        val collector = HookEventCollector()
+        repeat(4) { collector.record(profile, it.toLong(), "ok", null) }
+
+        val firstAttempt = collector.snapshot()
+        // No acknowledgement represents an encode/transport failure.
+        val retry = collector.snapshot()
+
+        assertEquals(firstAttempt, retry)
+        assertEquals(4, retry.events.size)
+        assertEquals(4L, retry.counts["p1|ok"])
     }
 
     @Test
