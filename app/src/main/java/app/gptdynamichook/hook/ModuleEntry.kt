@@ -19,7 +19,12 @@ import java.util.concurrent.ConcurrentHashMap
  * enabled, validated profiles in the exact target package.
  */
 class ModuleEntry : XposedModule() {
-    private val installed = ConcurrentHashMap<String, XposedInterface.HookHandle>()
+    private data class InstalledHook(
+        val signature: String,
+        val handle: XposedInterface.HookHandle
+    )
+
+    private val installed = ConcurrentHashMap<String, InstalledHook>()
     private val preferenceListeners = ConcurrentHashMap<String, SharedPreferences.OnSharedPreferenceChangeListener>()
 
     override fun onModuleLoaded(param: ModuleLoadedParam) {
@@ -59,17 +64,32 @@ class ModuleEntry : XposedModule() {
         classLoader: ClassLoader,
         profiles: List<HookProfile>
     ) {
-        val active = profiles.filter {
+        val matching = profiles.filter {
             HookProfileValidator.matchesTarget(it, packageName)
         }
-        val activeKeys = active.map { hookKey(packageName, it.id) }.toSet()
+        val duplicateIds = matching.groupBy { it.id }
+            .filterValues { it.size > 1 }
+            .keys
+        if (duplicateIds.isNotEmpty()) {
+            log(Log.WARN, TAG, "Ignoring duplicate Profile IDs: ${duplicateIds.joinToString()}")
+        }
+        val active = matching.filterNot { it.id in duplicateIds }
+        val desired = active.associateBy { hookKey(packageName, it.id) }
 
-        val packagePrefix = "$packageName:"
-        installed.keys
-            .filter { it.startsWith(packagePrefix) && it !in activeKeys }
-            .forEach { key -> installed.remove(key)?.unhook() }
+        // A reused ID must not preserve a hook when its target signature changes.
+        installed.entries
+            .filter { (key, registration) ->
+                key.startsWith("$packageName:") &&
+                    desired[key]?.let(::signatureOf) != registration.signature
+            }
+            .forEach { entry ->
+                installed.remove(entry.key, entry.value)?.handle?.unhook()
+            }
 
         active.forEach { profile ->
+            val key = hookKey(packageName, profile.id)
+            if (installed.containsKey(key)) return@forEach
+
             val method = ExecutableResolver.resolveMethod(
                 classLoader,
                 profile.className,
@@ -80,24 +100,27 @@ class ModuleEntry : XposedModule() {
                 log(Log.WARN, TAG, "Profile ${profile.id}: exact method signature not found")
                 return@forEach
             }
-            installPassThrough(packageName, profile, method)
+            installPassThrough(key, profile, method)
         }
     }
 
-    private fun installPassThrough(packageName: String, profile: HookProfile, method: Method) {
-        val key = hookKey(packageName, profile.id)
-        if (installed.containsKey(key)) return
+    private fun installPassThrough(key: String, profile: HookProfile, method: Method) {
         runCatching {
             val handle = hook(method)
                 .setId(key)
                 .setExceptionMode(XposedInterface.ExceptionMode.PROTECTIVE)
                 .intercept { chain -> chain.proceed() }
-            installed.put(key, handle)?.unhook()
+            val registration = InstalledHook(signatureOf(profile), handle)
+            installed.put(key, registration)?.handle?.unhook()
             log(Log.INFO, TAG, "Installed validated pass-through profile ${profile.id}")
         }.onFailure {
             log(Log.ERROR, TAG, "Failed to install profile ${profile.id}: ${it.javaClass.simpleName}")
         }
     }
+
+    private fun signatureOf(profile: HookProfile): String =
+        listOf(profile.className, profile.methodName, profile.parameterTypeNames.joinToString(","))
+            .joinToString("#")
 
     private fun hookKey(packageName: String, profileId: String) = "$packageName:$profileId"
 
