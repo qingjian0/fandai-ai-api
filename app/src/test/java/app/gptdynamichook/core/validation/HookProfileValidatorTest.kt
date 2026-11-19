@@ -39,6 +39,18 @@ class HookProfileValidatorTest {
     }
 
     @Test
+    fun rejectsProfileIdsThatCanBreakRuntimeHookKeys() {
+        val profile = HookProfile(
+            id = "profile:with:separators",
+            targetPackage = "com.openai.chatgpt",
+            className = "com.example.Client",
+            methodName = "execute",
+            parameterTypeNames = emptyList()
+        )
+        assertTrue(HookProfileValidator.validate(profile).contains("invalid_profile_id"))
+    }
+
+    @Test
     fun onlyEnabledExactPackageProfilesMatch() {
         val profile = HookProfile(
             id = "profile",
