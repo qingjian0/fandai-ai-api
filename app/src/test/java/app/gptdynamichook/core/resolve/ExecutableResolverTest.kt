@@ -56,6 +56,30 @@ class ExecutableResolverTest {
         assertEquals(null, method)
     }
 
+    @Test
+    fun prefersConcreteMethodOverCovariantReturnBridge() {
+        val method = ExecutableResolver.resolveMethod(
+            CovariantFixture::class.java.classLoader!!,
+            CovariantFixture::class.java.name,
+            "create",
+            emptyList()
+        )
+
+        assertNotNull(method)
+        assertEquals(String::class.java, method!!.returnType)
+        assertEquals(false, method.isBridge)
+        assertEquals(false, method.isSynthetic)
+    }
+
+    open class CovariantBase {
+        @Suppress("unused")
+        open fun create(): Any = Any()
+    }
+
+    class CovariantFixture : CovariantBase() {
+        override fun create(): String = "concrete"
+    }
+
     class Fixture {
         @Suppress("unused")
         fun combine(count: Int, value: String): String = "$count:$value"
