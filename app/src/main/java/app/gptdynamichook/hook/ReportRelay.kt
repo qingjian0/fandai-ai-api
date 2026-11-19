@@ -7,17 +7,8 @@ import android.util.Log
 import app.gptdynamichook.ObservationProvider
 
 /**
- * One-way transport for the observation report, from the hooked target process
- * back to the module app.
- *
- * Why not logcat only: the module app cannot read another process' logcat
- * buffer without adb, so a user who enabled a profile but has no adb would
- * never see a report. This relay carries the already-sanitized JSON through a
- * Binder call so the module UI can display it.
- *
- * The target process has no injected Context, so the application instance is
- * resolved through ActivityThread. Every failure is swallowed on purpose: a
- * broken relay must never change the hooked method's behavior.
+ * One-way transport for sanitized observation reports from a hooked target
+ * process back to the module app. Transport failure must never affect the hook.
  */
 object ReportRelay {
     private const val TAG = "GPTDynamicHook"
@@ -26,26 +17,31 @@ object ReportRelay {
     private const val KEY_REPORT = "report"
 
     @Volatile private var application: Application? = null
-    @Volatile private var disabled = false
 
-    fun publish(json: String) {
-        if (disabled || json.isEmpty()) return
+    /** True only when the provider explicitly acknowledges durable acceptance. */
+    fun publish(json: String): Boolean {
+        if (json.isEmpty()) return false
         val context = resolveApplication()
         if (context == null) {
-            disabled = true
             Log.w(TAG, "report relay unavailable: no application context")
-            return
+            return false
         }
-        runCatching {
+        return runCatching {
             val uri = Uri.parse("content://$AUTHORITY/report")
             val extras = Bundle().apply {
                 putString(KEY_REPORT, json)
                 putString("targetPackage", context.packageName)
             }
-            context.contentResolver.call(uri, METHOD_PUBLISH, null, extras)
-        }.onFailure {
-            // A rejected or unavailable relay is not a hook failure.
-            Log.w(TAG, "report relay rejected: ${it.javaClass.simpleName}")
+            val reply = context.contentResolver.call(uri, METHOD_PUBLISH, null, extras)
+            val accepted = reply?.getBoolean(ObservationProvider.KEY_ACCEPTED, false) == true
+            if (!accepted) {
+                val reason = reply?.getString(ObservationProvider.KEY_REASON) ?: "no provider acknowledgement"
+                Log.w(TAG, "report relay not accepted: $reason")
+            }
+            accepted
+        }.getOrElse {
+            Log.w(TAG, "report relay failed: ${it.javaClass.simpleName}")
+            false
         }
     }
 
@@ -65,6 +61,4 @@ object ReportRelay {
     fun authority(): String = AUTHORITY
 
     fun keyReport(): String = KEY_REPORT
-
-    fun isDisabled(): Boolean = disabled
 }
