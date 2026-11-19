@@ -37,6 +37,18 @@ object HookRuleCodec {
                     }.orEmpty()
                     val regex = item.optString("classRegex", "").takeIf { it.isNotBlank() }
                     if (names.isEmpty() && regex == null) continue
+                    val rewrite = item.optJSONObject("rewrite")
+                    val rewriteArgs = LinkedHashMap<Int, String>()
+                    rewrite?.optJSONObject("args")?.let { args ->
+                        val keys = args.keys()
+                        while (keys.hasNext()) {
+                            val key = keys.next()
+                            val index = key.toIntOrNull() ?: continue
+                            if (index < 0 || index > MAX_ARGS) continue
+                            val literal = args.optString(key, "")
+                            if (literal.length <= MAX_LITERAL_LENGTH) rewriteArgs[index] = literal
+                        }
+                    }
                     add(
                         HookRule(
                             id = id,
@@ -48,7 +60,11 @@ object HookRuleCodec {
                             captureElapsed = item.optBoolean("captureElapsed", true),
                             captureArgTypes = item.optInt("captureArgTypes", 0).coerceIn(0, MAX_ARGS),
                             sampleEvery = item.optInt("sampleEvery", 1).coerceIn(1, 10_000),
-                            maxHooks = item.optInt("maxHooks", 64).coerceIn(1, MAX_HOOKS_PER_RULE)
+                            maxHooks = item.optInt("maxHooks", 64).coerceIn(1, MAX_HOOKS_PER_RULE),
+                            rewriteArgs = rewriteArgs,
+                            rewriteResult = rewrite?.optString("result", "")?.takeIf { it.isNotEmpty() },
+                            rewriteSkip = rewrite?.optBoolean("skip", false) == true,
+                            rewriteDryRun = rewrite?.optBoolean("dryRun", false) == true
                         )
                     )
                 }
@@ -61,5 +77,6 @@ object HookRuleCodec {
     const val MAX_STACK = 16
     const val MAX_ARGS = 8
     const val MAX_HOOKS_PER_RULE = 400
+    const val MAX_LITERAL_LENGTH = 512
     const val MAX_ENCODED_LENGTH = 512 * 1024
 }
