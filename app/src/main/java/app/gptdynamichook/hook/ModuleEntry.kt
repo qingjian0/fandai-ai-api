@@ -113,15 +113,17 @@ class ModuleEntry : XposedModule() {
                 }
             }
 
+        // PackageManager identity is invariant for this package during one
+        // profile refresh. Avoid a Binder lookup for every individual profile.
+        val identity = if (active.isNotEmpty()) PackageIdentity.of(packageName) else null
         active.forEach { profile ->
             val key = hookKey(packageName, profile.id)
             if (installed.containsKey(key)) return@forEach
 
-            val identity = PackageIdentity.of(packageName)
             val pinFailure = TargetPin.mismatchReason(
                 profile,
-                identity.versionCode,
-                identity.signerSha256
+                identity?.versionCode,
+                identity?.signerSha256
             )
             if (pinFailure != null) {
                 log(Log.WARN, TAG, "Profile ${profile.id} rejected by pin: $pinFailure")
