@@ -76,6 +76,51 @@ class HookReportCodecTest {
     }
 
     @Test
+    fun snapshotAndAcknowledgePreserveEventsRecordedAfterSnapshot() {
+        val collector = HookEventCollector(capacity = 8)
+        collector.record(profile, 1L, "ok", null)
+        val first = collector.snapshot()
+        collector.record(profile, 2L, "throw:IOException", null)
+
+        collector.acknowledge(first)
+        val remaining = collector.snapshot()
+        assertEquals(1, remaining.events.size)
+        assertEquals("throw:IOException", remaining.events.single().outcome)
+        assertEquals(mapOf("p1|throw:IOException" to 1L), remaining.counts)
+        assertTrue(!collector.isEmpty())
+    }
+
+    @Test
+    fun failedDeliveryCanRetryTheSameSnapshotWithoutDataLoss() {
+        val collector = HookEventCollector(capacity = 8)
+        repeat(3) { collector.record(profile, it.toLong(), "ok", null) }
+
+        val firstAttempt = collector.snapshot()
+        // Simulate encode/transport failure: no acknowledgement is issued.
+        val retry = collector.snapshot()
+        assertEquals(firstAttempt, retry)
+        assertEquals(3, retry.counts["p1|ok"])
+        assertEquals(3, retry.events.size)
+        assertTrue(!collector.isEmpty())
+
+        collector.acknowledge(retry)
+        assertTrue(collector.isEmpty())
+    }
+
+    @Test
+    fun acknowledgeSubtractsOnlyCapturedCounterDelta() {
+        val collector = HookEventCollector(capacity = 8)
+        collector.record(profile, 1L, "ok", null)
+        val first = collector.snapshot()
+        collector.record(profile, 2L, "ok", null)
+
+        collector.acknowledge(first)
+        val remaining = collector.snapshot()
+        assertEquals(1, remaining.events.size)
+        assertEquals(1L, remaining.counts["p1|ok"])
+    }
+
+    @Test
     fun emptySnapshotEncodesEmptyEvents() {
         val json = HookReportCodec.encode(HookEventCollector().drain(), "pkg")
         assertEquals(0, JSONObject(json).getJSONArray("events").length())
