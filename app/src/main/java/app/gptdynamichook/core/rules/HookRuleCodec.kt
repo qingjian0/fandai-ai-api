@@ -59,6 +59,9 @@ object HookRuleCodec {
                             captureStack = item.optInt("captureStack", 0).coerceIn(0, MAX_STACK),
                             captureElapsed = item.optBoolean("captureElapsed", true),
                             captureArgTypes = item.optInt("captureArgTypes", 0).coerceIn(0, MAX_ARGS),
+                            captureResult = item.optBoolean("captureResult", false),
+                            captureResultDepth = item.optInt("captureResultDepth", 24)
+                                .coerceIn(1, MAX_RESULT_DEPTH),
                             sampleEvery = item.optInt("sampleEvery", 1).coerceIn(1, 10_000),
                             maxHooks = item.optInt("maxHooks", 64).coerceIn(1, MAX_HOOKS_PER_RULE),
                             rewriteArgs = rewriteArgs,
@@ -77,6 +80,7 @@ object HookRuleCodec {
     const val MAX_STACK = 16
     const val MAX_ARGS = 8
     const val MAX_HOOKS_PER_RULE = 400
+    const val MAX_RESULT_DEPTH = 128
     const val MAX_LITERAL_LENGTH = 512
     const val MAX_ENCODED_LENGTH = 512 * 1024
 }
