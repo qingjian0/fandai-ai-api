@@ -7,6 +7,7 @@ object HookProfileValidator {
     private val packagePattern = Regex("^[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_]*)+$")
     private val classPattern = Regex("^[A-Za-z_$][A-Za-z0-9_$.]*$")
     private val memberPattern = Regex("^[A-Za-z_$][A-Za-z0-9_$]*$")
+    private val signerSha256Pattern = Regex("^[0-9a-f]{64}$")
     private val parameterTypePattern = Regex(
         "^(boolean|byte|char|short|int|long|float|double|" +
             "[A-Za-z_$][A-Za-z0-9_$]*(\\.[A-Za-z_$][A-Za-z0-9_$]*)*)" +
@@ -24,6 +25,17 @@ object HookProfileValidator {
                     !parameterTypePattern.matches(it)
             }) {
             add("invalid_parameter_type")
+        }
+        if (profile.targetVersionCode != null && profile.targetVersionCode <= 0L) {
+            add("invalid_target_version_code")
+        }
+        // Signer pinning is stored lowercase hex; a value that is not exactly
+        // 64 hex characters can never match a real certificate digest, so it is
+        // rejected here instead of silently failing to match at runtime.
+        if (profile.targetSignerSha256 != null &&
+            !signerSha256Pattern.matches(profile.targetSignerSha256)
+        ) {
+            add("invalid_target_signer_sha256")
         }
     }
 
