@@ -20,7 +20,7 @@ class App : Application(), XposedServiceHelper.OnServiceListener {
     }
 
     fun executeProfileIo(task: () -> Unit) {
-        profileIoExecutor.execute(task)
+        profileIoExecutor.execute { task() }
     }
 
     fun addServiceStateListener(listener: ServiceStateListener) {
