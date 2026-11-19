@@ -104,6 +104,8 @@ class RuleEngine(
                         val rewritten = applyRewrite(rule, chain, method, local)
                         val result = if (rewritten.skipOriginal) {
                             rewritten.value
+                        } else if (rewritten.args != null) {
+                            chain.proceed(rewritten.args)
                         } else {
                             chain.proceed()
                         }
@@ -126,7 +128,8 @@ class RuleEngine(
     private class RewriteOutcome(
         val skipOriginal: Boolean,
         val replaceResult: Boolean,
-        val value: Any?
+        val value: Any?,
+        val args: Array<Any?>? = null
     )
 
     /**
@@ -146,28 +149,36 @@ class RuleEngine(
             return RewriteOutcome(false, false, null)
         }
         val parameterTypes = method.parameterTypes
-        rule.rewriteArgs.forEach { (index, literal) ->
-            if (index >= parameterTypes.size) return@forEach
-            val converted = literalOf(literal, parameterTypes[index])
-            if (rule.rewriteDryRun) {
-                log("[rewrite:dry] $target arg$index <- $literal")
-            } else {
-                runCatching { chain.setArg(index, converted) }
-                    .onFailure { log("[rewrite] $target arg$index failed: ${it.javaClass.simpleName}") }
-                log("[rewrite] $target arg$index <- $literal")
+        // The chain exposes an immutable arg list; a rewrite must pass a new
+        // array to proceed(args) rather than mutate the existing one.
+        var newArgs: Array<Any?>? = null
+        if (rule.rewriteArgs.isNotEmpty()) {
+            val base = chain.getArgs()
+            val copy = arrayOfNulls<Any?>(base.size)
+            for (i in base.indices) copy[i] = base[i]
+            rule.rewriteArgs.forEach { (index, literal) ->
+                if (index >= parameterTypes.size) return@forEach
+                val converted = literalOf(literal, parameterTypes[index])
+                if (rule.rewriteDryRun) {
+                    log("[rewrite:dry] $target arg$index <- $literal")
+                } else {
+                    copy[index] = converted
+                    newArgs = copy
+                    log("[rewrite] $target arg$index <- $literal")
+                }
             }
         }
         val resultLiteral = rule.rewriteResult
         if (resultLiteral == null) {
-            return RewriteOutcome(rule.rewriteSkip, false, null)
+            return RewriteOutcome(rule.rewriteSkip, false, null, newArgs)
         }
         val value = literalOf(resultLiteral, method.returnType)
         if (rule.rewriteDryRun) {
             log("[rewrite:dry] $target result <- $resultLiteral")
-            return RewriteOutcome(false, false, null)
+            return RewriteOutcome(false, false, null, newArgs)
         }
         log("[rewrite] $target result <- $resultLiteral")
-        return RewriteOutcome(rule.rewriteSkip, true, value)
+        return RewriteOutcome(rule.rewriteSkip, true, value, newArgs)
     }
 
     /** Operator literals only: null, boolean, integer, long, or string. */
