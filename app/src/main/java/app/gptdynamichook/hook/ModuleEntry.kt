@@ -27,6 +27,7 @@ class ModuleEntry : XposedModule() {
     )
 
     private val installed = ConcurrentHashMap<String, InstalledHook>()
+    private val packageLocks = ConcurrentHashMap<String, Any>()
     private val preferenceListeners = ConcurrentHashMap<String, SharedPreferences.OnSharedPreferenceChangeListener>()
 
     override fun onModuleLoaded(param: ModuleLoadedParam) {
@@ -47,10 +48,13 @@ class ModuleEntry : XposedModule() {
         }
 
         val apply = {
-            val profiles = HookProfileCodec.decode(
-                preferences.getString(ProfileStore.PROFILES_KEY, "[]")
-            )
-            applyProfiles(param.packageName, param.classLoader, profiles)
+            val lock = packageLocks.computeIfAbsent(param.packageName) { Any() }
+            synchronized(lock) {
+                val profiles = HookProfileCodec.decode(
+                    preferences.getString(ProfileStore.PROFILES_KEY, "[]")
+                )
+                applyProfiles(param.packageName, param.classLoader, profiles)
+            }
         }
 
         apply()
