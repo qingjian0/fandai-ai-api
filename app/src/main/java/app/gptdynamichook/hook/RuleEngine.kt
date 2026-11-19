@@ -101,9 +101,15 @@ class RuleEngine(
                 .intercept { chain ->
                     val started = System.nanoTime()
                     try {
-                        val result = chain.proceed()
+                        val rewritten = applyRewrite(rule, chain, method, local)
+                        val result = if (rewritten.skipOriginal) {
+                            rewritten.value
+                        } else {
+                            chain.proceed()
+                        }
+                        val finalResult = if (rewritten.replaceResult) rewritten.value else result
                         record(rule, local, started, null)
-                        result
+                        finalResult
                     } catch (t: Throwable) {
                         record(rule, local, started, t.javaClass.name)
                         throw t
@@ -115,6 +121,67 @@ class RuleEngine(
             log("[rule:${rule.id}] install failed: $local (${it.javaClass.simpleName})")
             false
         }
+    }
+
+    private class RewriteOutcome(
+        val skipOriginal: Boolean,
+        val replaceResult: Boolean,
+        val value: Any?
+    )
+
+    /**
+     * Applies an operator-supplied rewrite.
+     *
+     * Literals are never derived from app data, and [HookRule.rewriteDryRun] logs
+     * the decision without touching the call, so a rewrite can be verified before
+     * it is allowed to take effect.
+     */
+    private fun applyRewrite(
+        rule: HookRule,
+        chain: XposedInterface.Chain,
+        method: Method,
+        target: String
+    ): RewriteOutcome {
+        if (rule.rewriteArgs.isEmpty() && rule.rewriteResult == null && !rule.rewriteSkip) {
+            return RewriteOutcome(false, false, null)
+        }
+        val parameterTypes = method.parameterTypes
+        rule.rewriteArgs.forEach { (index, literal) ->
+            if (index >= parameterTypes.size) return@forEach
+            val converted = literalOf(literal, parameterTypes[index])
+            if (rule.rewriteDryRun) {
+                log("[rewrite:dry] $target arg$index <- $literal")
+            } else {
+                runCatching { chain.setArg(index, converted) }
+                    .onFailure { log("[rewrite] $target arg$index failed: ${it.javaClass.simpleName}") }
+                log("[rewrite] $target arg$index <- $literal")
+            }
+        }
+        val resultLiteral = rule.rewriteResult
+        if (resultLiteral == null) {
+            return RewriteOutcome(rule.rewriteSkip, false, null)
+        }
+        val value = literalOf(resultLiteral, method.returnType)
+        if (rule.rewriteDryRun) {
+            log("[rewrite:dry] $target result <- $resultLiteral")
+            return RewriteOutcome(false, false, null)
+        }
+        log("[rewrite] $target result <- $resultLiteral")
+        return RewriteOutcome(rule.rewriteSkip, true, value)
+    }
+
+    /** Operator literals only: null, boolean, integer, long, or string. */
+    private fun literalOf(literal: String, type: Class<*>): Any? = when {
+        literal == "null" -> null
+        literal == "true" -> java.lang.Boolean.TRUE
+        literal == "false" -> java.lang.Boolean.FALSE
+        type == java.lang.String::class.java || type == CharSequence::class.java -> literal
+        type == Integer.TYPE || type == java.lang.Integer::class.java -> literal.toIntOrNull()
+        type == java.lang.Long.TYPE || type == java.lang.Long::class.java -> literal.toLongOrNull()
+        type == java.lang.Boolean.TYPE -> literal.toBoolean()
+        type == java.lang.Float.TYPE -> literal.toFloatOrNull()
+        type == java.lang.Double.TYPE -> literal.toDoubleOrNull()
+        else -> null
     }
 
     private fun record(rule: HookRule, target: String, startedNanos: Long, throwable: String?) {
