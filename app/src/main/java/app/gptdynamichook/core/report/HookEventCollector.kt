@@ -45,7 +45,7 @@ class HookEventCollector(
             if (buffer.size >= capacity) buffer.removeFirst()
             buffer.addLast(event)
 
-            val key = "$"+"{profile.id}|$"+"{event.outcome}"
+            val key = "${profile.id}|" + "${event.outcome}"
             if (counters.containsKey(key) || counters.size < MAX_COUNTER_KEYS - 1) {
                 counters[key] = (counters[key] ?: 0L) + 1L
             } else {
