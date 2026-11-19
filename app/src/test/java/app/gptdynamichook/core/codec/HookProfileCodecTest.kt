@@ -48,4 +48,29 @@ class HookProfileCodecTest {
         assertEquals(emptyList<HookProfile>(), HookProfileCodec.decode(HookProfileCodec.encode(profiles)))
     }
 
+    @Test
+    fun roundTripsOptionalPinningFields() {
+        val pinned = HookProfile(
+            id = "pinned",
+            targetPackage = "com.openai.chatgpt",
+            className = "com.example.Client",
+            methodName = "send",
+            parameterTypeNames = listOf("java.lang.String"),
+            enabled = false,
+            targetVersionCode = 4210L,
+            targetSignerSha256 = "b".repeat(64)
+        )
+        val unpinned = HookProfile(
+            id = "unpinned",
+            targetPackage = "com.openai.chatgpt",
+            className = "com.example.Client",
+            methodName = "send",
+            parameterTypeNames = emptyList(),
+            enabled = true
+        )
+        val decoded = HookProfileCodec.decode(HookProfileCodec.encode(listOf(pinned, unpinned)))
+        assertEquals(listOf(pinned, unpinned), decoded)
+        assertEquals(null, decoded[1].targetVersionCode)
+        assertEquals(null, decoded[1].targetSignerSha256)
+    }
 }
