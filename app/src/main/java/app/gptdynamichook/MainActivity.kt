@@ -95,7 +95,7 @@ class MainActivity : Activity(), App.ServiceStateListener {
         val input = EditText(this).apply {
             this.hint = hint
             setText(value)
-            singleLine = true
+            isSingleLine = true
         }
         parent.addView(input)
         return input
