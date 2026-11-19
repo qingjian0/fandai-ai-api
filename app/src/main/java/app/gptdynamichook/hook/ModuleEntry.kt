@@ -155,13 +155,17 @@ class ModuleEntry : XposedModule() {
                 .setExceptionMode(XposedInterface.ExceptionMode.PROTECTIVE)
                 .intercept { chain ->
                     val started = System.nanoTime()
+                    val arguments = runCatching {
+                        HookResultParser.parseArguments(chain.args)
+                    }.getOrNull()
                     try {
                         val result = chain.proceed()
                         collector.record(
                             profile,
                             (System.nanoTime() - started) / 1_000_000L,
                             "ok",
-                            HookResultParser.parseObject(result)
+                            HookResultParser.parseObject(result),
+                            arguments
                         )
                         schedulePublish(packageName)
                         result
@@ -170,7 +174,8 @@ class ModuleEntry : XposedModule() {
                             profile,
                             (System.nanoTime() - started) / 1_000_000L,
                             "throw:" + t.javaClass.simpleName.take(64),
-                            null
+                            null,
+                            arguments
                         )
                         schedulePublish(packageName)
                         throw t
