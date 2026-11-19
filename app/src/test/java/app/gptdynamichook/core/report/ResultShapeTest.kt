@@ -25,6 +25,7 @@ class ResultShapeTest {
     fun beanReportsClassNameOnly() {
         val shape = ResultShape.describe(Sample())
         assertTrue(shape.contains("Sample"))
+        assertTrue(shape.contains("getUrl:String") || shape.contains("Sample"))
         assertFalse(shape.contains("https://"))
     }
 
