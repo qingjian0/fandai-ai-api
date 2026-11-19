@@ -64,9 +64,10 @@ class ModuleEntry : XposedModule() {
         }
         val activeKeys = active.map { hookKey(packageName, it.id) }.toSet()
 
-        installed.keys.filterNot(activeKeys::contains).forEach { key ->
-            installed.remove(key)?.unhook()
-        }
+        val packagePrefix = "$packageName:"
+        installed.keys
+            .filter { it.startsWith(packagePrefix) && it !in activeKeys }
+            .forEach { key -> installed.remove(key)?.unhook() }
 
         active.forEach { profile ->
             val method = ExecutableResolver.resolveMethod(
@@ -88,7 +89,7 @@ class ModuleEntry : XposedModule() {
         if (installed.containsKey(key)) return
         runCatching {
             val handle = hook(method)
-                .setId(profile.id)
+                .setId(key)
                 .setExceptionMode(XposedInterface.ExceptionMode.PROTECTIVE)
                 .intercept { chain -> chain.proceed() }
             installed.put(key, handle)?.unhook()
