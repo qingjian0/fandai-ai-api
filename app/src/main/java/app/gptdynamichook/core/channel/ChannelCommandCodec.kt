@@ -22,7 +22,18 @@ object ChannelCommandCodec {
                 args = args,
                 depth = o.optInt("depth", 2).coerceIn(0, 6),
                 maxOps = o.optInt("maxOps", 400).coerceIn(1, 2000),
-                emitValues = o.optBoolean("emitValues", false)
+                emitValues = o.optBoolean("emitValues", false),
+                method = o.optString("method", "").ifBlank { null },
+                headers = buildMap {
+                    o.optJSONObject("headers")?.let { h ->
+                        val keys = h.keys()
+                        while (keys.hasNext() && size < 16) {
+                            val k = keys.next()
+                            if (k.length <= 64) put(k, h.optString(k, "").take(512))
+                        }
+                    }
+                },
+                body = o.optString("body", "").ifBlank { null }
             )
         }.getOrNull()
     }
