@@ -30,4 +30,11 @@ class HookProfileSignatureTest {
         assertNotEquals(original, HookProfileSignature.of(profile(methodName = "submit")))
         assertNotEquals(original, HookProfileSignature.of(profile(parameters = listOf("int"))))
     }
+
+    @Test
+    fun delimiterCharactersCannotCreateSignatureCollisions() {
+        val first = HookProfileSignature.of(profile(parameters = listOf("a,b", "c")))
+        val second = HookProfileSignature.of(profile(parameters = listOf("a", "b,c")))
+        assertNotEquals(first, second)
+    }
 }
