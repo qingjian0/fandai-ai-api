@@ -40,6 +40,39 @@ jobs:
         run: gradle assembleDebug
       - name: Run unit tests
         run: gradle testDebugUnitTest
+      - name: Audit LSPosed module metadata
+        run: |
+          set -euo pipefail
+          META=app/src/main/resources/META-INF/xposed
+          test -f "$META/java_init.list" || { echo "missing java_init.list"; exit 1; }
+          test -f "$META/module.prop" || { echo "missing module.prop"; exit 1; }
+
+          # Every entry in java_init.list must resolve to a real Kotlin/Java source file.
+          while IFS= read -r entry; do
+            [ -z "$entry" ] && continue
+            path="app/src/main/java/$(echo "$entry" | tr '.' '/').kt"
+            alt="app/src/main/java/$(echo "$entry" | tr '.' '/').java"
+            if [ ! -f "$path" ] && [ ! -f "$alt" ]; then
+              echo "java_init.list entry has no source: $entry"
+              exit 1
+            fi
+            if ! grep -q "class ${entry##*.}" "$path" "$alt" 2>/dev/null; then
+              echo "java_init.list entry declares no matching class: $entry"
+              exit 1
+            fi
+            echo "init entry ok: $entry"
+          done < "$META/java_init.list"
+
+          grep -qx 'minApiVersion=102' "$META/module.prop" || { echo "minApiVersion must be 102"; exit 1; }
+          grep -qx 'targetApiVersion=102' "$META/module.prop" || { echo "targetApiVersion must be 102"; exit 1; }
+          grep -qx 'exceptionMode=protective' "$META/module.prop" || { echo "exceptionMode must be protective"; exit 1; }
+          grep -qx 'staticScope=false' "$META/module.prop" || { echo "staticScope must be false"; exit 1; }
+
+          # The packaged APK must carry the same metadata, not just the source tree.
+          APK=$(find app/build/outputs/apk/debug -name '*.apk' | head -1)
+          unzip -l "$APK" | grep -q 'META-INF/xposed/java_init.list' || { echo "APK lacks java_init.list"; exit 1; }
+          unzip -l "$APK" | grep -q 'META-INF/xposed/module.prop' || { echo "APK lacks module.prop"; exit 1; }
+          echo "module metadata audit passed"
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
