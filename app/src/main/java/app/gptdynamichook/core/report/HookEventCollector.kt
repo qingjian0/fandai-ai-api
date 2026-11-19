@@ -45,7 +45,7 @@ class HookEventCollector(
             if (buffer.size >= capacity) buffer.removeFirst()
             buffer.addLast(event)
 
-            val key = "${profile.id}|" + "${event.outcome}"
+            val key = "${profile.id}|${event.outcome}"
             if (counters.containsKey(key) || counters.size < MAX_COUNTER_KEYS - 1) {
                 counters[key] = (counters[key] ?: 0L) + 1L
             } else {
@@ -55,6 +55,35 @@ class HookEventCollector(
         }
     }
 
+    /**
+     * Returns a stable copy without consuming it. Call acknowledge(snapshot)
+     * only after encoding and transport have both succeeded.
+     */
+    fun snapshot(): Snapshot = synchronized(lock) {
+        Snapshot(buffer.toList(), counters.toMap())
+    }
+
+    /**
+     * Removes only data represented by [snapshot]. Events recorded after the
+     * snapshot remain queued; counter deltas are subtracted rather than reset.
+     */
+    fun acknowledge(snapshot: Snapshot) {
+        synchronized(lock) {
+            val capturedSeqs = snapshot.events.asSequence().map { it.seq }.toHashSet()
+            if (capturedSeqs.isNotEmpty()) {
+                val remaining = buffer.filterNot { it.seq in capturedSeqs }
+                buffer.clear()
+                remaining.forEach(buffer::addLast)
+            }
+            snapshot.counts.forEach { (key, capturedCount) ->
+                val remaining = (counters[key] ?: 0L) - capturedCount
+                if (remaining > 0L) counters[key] = remaining else counters.remove(key)
+            }
+            dirty = buffer.isNotEmpty() || counters.isNotEmpty()
+        }
+    }
+
+    /** Legacy destructive drain. Prefer snapshot + acknowledge for transport. */
     fun drain(): Snapshot = synchronized(lock) {
         val snapshot = Snapshot(buffer.toList(), counters.toMap())
         buffer.clear()
