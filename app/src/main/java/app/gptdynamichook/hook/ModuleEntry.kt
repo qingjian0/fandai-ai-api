@@ -22,6 +22,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
 
 /** Installs pass-through interceptors only for explicitly enabled, validated profiles. */
 class ModuleEntry : XposedModule() {
@@ -30,8 +31,9 @@ class ModuleEntry : XposedModule() {
         val handle: XposedInterface.HookHandle
     )
 
-    private val collector = HookEventCollector()
-    private val publishQueued = AtomicBoolean(false)
+    private val collectors = ConcurrentHashMap<String, HookEventCollector>()
+    private val publishQueued = ConcurrentHashMap<String, AtomicBoolean>()
+    private val relayFailures = ConcurrentHashMap<String, AtomicInteger>()
     private val publisher = Executors.newSingleThreadScheduledExecutor { runnable ->
         Thread(runnable, "gpt-hook-report").apply { isDaemon = true }
     }
@@ -146,6 +148,7 @@ class ModuleEntry : XposedModule() {
         profile: HookProfile,
         method: Method
     ) {
+        val collector = collectors.computeIfAbsent(packageName) { HookEventCollector() }
         runCatching {
             val handle = hook(method)
                 .setId(key)
@@ -182,17 +185,19 @@ class ModuleEntry : XposedModule() {
     }
 
     /**
-     * Takes a non-destructive snapshot, encodes it once, writes it to logcat and
-     * offers it to the module app. The snapshot is acknowledged only after the
-     * report has actually been produced, so a failing encode or relay keeps the
-     * events queued for the next attempt instead of losing them.
+     * Each target package owns an isolated collector and publish queue. A report
+     * can therefore never attribute events from one package to another.
      */
-    private fun schedulePublish(packageName: String) {
-        if (!publishQueued.compareAndSet(false, true)) return
+    private fun schedulePublish(packageName: String, delayMs: Long = REPORT_DEBOUNCE_MS) {
+        val collector = collectors[packageName] ?: return
+        val queued = publishQueued.computeIfAbsent(packageName) { AtomicBoolean(false) }
+        if (!queued.compareAndSet(false, true)) return
+
         runCatching {
             publisher.schedule({
-                publishQueued.set(false)
+                queued.set(false)
                 if (collector.isEmpty()) return@schedule
+
                 val snapshot = collector.snapshot()
                 val json = runCatching {
                     HookReportCodec.encode(snapshot, packageName)
@@ -200,15 +205,26 @@ class ModuleEntry : XposedModule() {
                     log(Log.WARN, TAG, "report encode failed: ${it.javaClass.simpleName}")
                     return@schedule
                 }
-                // logcat is the primary channel; the provider relay is best effort.
+
                 log(Log.INFO, TAG, "observation-report: " + json)
-                val relayed = ReportRelay.publish(json)
-                collector.acknowledge(snapshot)
-                if (!relayed) {
-                    log(Log.WARN, TAG, "report kept in logcat only; relay not acknowledged")
+                if (ReportRelay.publish(json)) {
+                    collector.acknowledge(snapshot)
+                    relayFailures.remove(packageName)
+                } else {
+                    val failures = relayFailures.computeIfAbsent(packageName) { AtomicInteger(0) }
+                        .incrementAndGet()
+                    log(Log.WARN, TAG, "report relay not acknowledged; pending=$failures")
+                    // Bounded retries avoid a hot loop when the module app/provider
+                    // is unavailable. Pending data remains in the collector.
+                    if (failures < MAX_RELAY_RETRIES) {
+                        schedulePublish(packageName, RELAY_RETRY_MS)
+                    }
                 }
-            }, REPORT_DEBOUNCE_MS, TimeUnit.MILLISECONDS)
-        }.onFailure { publishQueued.set(false) }
+            }, delayMs, TimeUnit.MILLISECONDS)
+        }.onFailure {
+            queued.set(false)
+            log(Log.WARN, TAG, "report scheduling failed: ${it.javaClass.simpleName}")
+        }
     }
 
     private fun hookKey(packageName: String, profileId: String) = "$packageName:$profileId"
@@ -216,5 +232,7 @@ class ModuleEntry : XposedModule() {
     private companion object {
         const val TAG = "GPTDynamicHook"
         const val REPORT_DEBOUNCE_MS = 2000L
+        const val RELAY_RETRY_MS = 5000L
+        const val MAX_RELAY_RETRIES = 3
     }
 }
