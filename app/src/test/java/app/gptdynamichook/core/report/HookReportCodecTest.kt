@@ -121,6 +121,17 @@ class HookReportCodecTest {
     }
 
     @Test
+    fun encodedReportRespectsUtf8ByteBudgetForMultibyteProfileIds() {
+        val collector = HookEventCollector(capacity = 2)
+        val largeProfile = profile.copy(id = "界".repeat(3_000))
+        collector.record(largeProfile, 1L, "ok", null)
+
+        val json = HookReportCodec.encode(collector.snapshot(), "com.openai.chatgpt")
+        assertTrue(json.toByteArray(Charsets.UTF_8).size <= HookReportCodec.MAX_ENCODED_LENGTH)
+        assertTrue(JSONObject(json).optBoolean("truncated"))
+    }
+
+    @Test
     fun emptySnapshotEncodesEmptyEvents() {
         val json = HookReportCodec.encode(HookEventCollector().drain(), "pkg")
         assertEquals(0, JSONObject(json).getJSONArray("events").length())
