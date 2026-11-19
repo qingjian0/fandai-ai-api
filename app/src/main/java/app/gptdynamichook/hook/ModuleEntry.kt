@@ -189,6 +189,7 @@ class ModuleEntry : XposedModule() {
      * can therefore never attribute events from one package to another.
      */
     private fun schedulePublish(packageName: String, delayMs: Long = REPORT_DEBOUNCE_MS) {
+        if (delayMs == REPORT_DEBOUNCE_MS) relayFailures.remove(packageName)
         val collector = collectors[packageName] ?: return
         val queued = publishQueued.computeIfAbsent(packageName) { AtomicBoolean(false) }
         if (!queued.compareAndSet(false, true)) return
