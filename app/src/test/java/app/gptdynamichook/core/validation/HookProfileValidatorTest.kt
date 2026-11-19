@@ -21,6 +21,18 @@ class HookProfileValidatorTest {
     }
 
     @Test
+    fun acceptsPrimitiveAndReferenceArrayParameterTypes() {
+        val profile = HookProfile(
+            id = "arrays",
+            targetPackage = "com.openai.chatgpt",
+            className = "com.example.Client",
+            methodName = "execute",
+            parameterTypeNames = listOf("int[]", "java.lang.String[][]", "com.example.Outer$Inner")
+        )
+        assertTrue(HookProfileValidator.validate(profile).isEmpty())
+    }
+
+    @Test
     fun rejectsMalformedPackageAndMemberNames() {
         val errors = HookProfileValidator.validate(
             HookProfile(
@@ -36,6 +48,19 @@ class HookProfileValidatorTest {
                 "invalid_method_name", "invalid_parameter_type"),
             errors.toSet()
         )
+    }
+
+    @Test
+    fun rejectsMalformedParameterTypeSyntax() {
+        val invalidTypes = listOf("void[]", "java..lang.String", "int[ ]", "java.lang.String;")
+        val profile = HookProfile(
+            id = "invalid-types",
+            targetPackage = "com.openai.chatgpt",
+            className = "com.example.Client",
+            methodName = "execute",
+            parameterTypeNames = invalidTypes
+        )
+        assertTrue(HookProfileValidator.validate(profile).contains("invalid_parameter_type"))
     }
 
     @Test
