@@ -50,10 +50,14 @@ class ModuleEntry : XposedModule() {
         val apply = {
             val lock = packageLocks.computeIfAbsent(param.packageName) { Any() }
             synchronized(lock) {
-                val profiles = HookProfileCodec.decode(
-                    preferences.getString(ProfileStore.PROFILES_KEY, "[]")
-                )
-                applyProfiles(param.packageName, param.classLoader, profiles)
+                runCatching {
+                    val profiles = HookProfileCodec.decode(
+                        preferences.getString(ProfileStore.PROFILES_KEY, "[]")
+                    )
+                    applyProfiles(param.packageName, param.classLoader, profiles)
+                }.onFailure {
+                    log(Log.ERROR, TAG, "Profile refresh failed: ${it.javaClass.simpleName}")
+                }
             }
         }
 
@@ -93,7 +97,14 @@ class ModuleEntry : XposedModule() {
                     desired[key]?.let(HookProfileSignature::of) != registration.signature
             }
             .forEach { entry ->
-                if (installed.remove(entry.key, entry.value)) entry.value.handle.unhook()
+                val result = runCatching { entry.value.handle.unhook() }
+                if (result.isSuccess) {
+                    installed.remove(entry.key, entry.value)
+                } else {
+                    // Keep the registration so a later preference change can retry
+                    // unhooking instead of silently losing track of a live hook.
+                    log(Log.ERROR, TAG, "Failed to unhook stale profile: ${entry.key}")
+                }
             }
 
         active.forEach { profile ->
