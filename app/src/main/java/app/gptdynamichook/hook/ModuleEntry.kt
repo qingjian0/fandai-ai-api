@@ -22,10 +22,7 @@ import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 
-/**
- * Dynamic hook entry. It installs pass-through interceptors only for explicitly
- * enabled, validated profiles in the exact target package.
- */
+/** Installs pass-through interceptors only for explicitly enabled, validated profiles. */
 class ModuleEntry : XposedModule() {
     private data class InstalledHook(
         val signature: String,
@@ -43,7 +40,7 @@ class ModuleEntry : XposedModule() {
     private val preferenceListeners = ConcurrentHashMap<String, SharedPreferences.OnSharedPreferenceChangeListener>()
 
     override fun onModuleLoaded(param: ModuleLoadedParam) {
-        log(Log.INFO, TAG, "Loaded process=${param.processName}, API=$apiVersion, framework=$frameworkName")
+        log(Log.INFO, TAG, "Loaded process=\${param.processName}, API=$apiVersion, framework=$frameworkName")
     }
 
     override fun onPackageReady(param: PackageReadyParam) {
@@ -56,7 +53,7 @@ class ModuleEntry : XposedModule() {
         val preferences = runCatching {
             getRemotePreferences(ProfileStore.PREFERENCES_GROUP)
         }.getOrElse {
-            log(Log.WARN, TAG, "Remote preferences unavailable: ${it.javaClass.simpleName}")
+            log(Log.WARN, TAG, "Remote preferences unavailable: \${it.javaClass.simpleName}")
             return
         }
 
@@ -69,7 +66,7 @@ class ModuleEntry : XposedModule() {
                     )
                     applyProfiles(param.packageName, param.classLoader, profiles)
                 }.onFailure {
-                    log(Log.ERROR, TAG, "Profile refresh failed: ${it.javaClass.simpleName}")
+                    log(Log.ERROR, TAG, "Profile refresh failed: \${it.javaClass.simpleName}")
                 }
             }
         }
@@ -94,16 +91,13 @@ class ModuleEntry : XposedModule() {
             .filterValues { it.size > 1 }
             .keys
         if (duplicateIds.isNotEmpty()) {
-            log(Log.WARN, TAG, "Ignoring duplicate Profile IDs: ${duplicateIds.joinToString()}")
+            log(Log.WARN, TAG, "Ignoring duplicate Profile IDs: \${duplicateIds.joinToString()}")
         }
 
-        // Disabled, duplicated, deleted, or no-longer-matching profiles must not
-        // remain installed. This makes UI disable/delete changes take effect live.
         val unambiguous = matching.filterNot { it.id in duplicateIds }
         val active = ProfileCollection.enabledOnly(unambiguous)
         val desired = active.associateBy { hookKey(packageName, it.id) }
 
-        // A reused ID must not preserve a hook when its target signature changes.
         installed.entries
             .filter { (key, registration) ->
                 key.startsWith("$packageName:") &&
@@ -114,9 +108,7 @@ class ModuleEntry : XposedModule() {
                 if (result.isSuccess) {
                     installed.remove(entry.key, entry.value)
                 } else {
-                    // Keep the registration so a later preference change can retry
-                    // unhooking instead of silently losing track of a live hook.
-                    log(Log.ERROR, TAG, "Failed to unhook stale profile: ${entry.key}")
+                    log(Log.ERROR, TAG, "Failed to unhook stale profile: \${entry.key}")
                 }
             }
 
@@ -131,7 +123,7 @@ class ModuleEntry : XposedModule() {
                 profile.parameterTypeNames
             )
             if (method == null) {
-                log(Log.WARN, TAG, "Profile ${profile.id}: exact method signature not found")
+                log(Log.WARN, TAG, "Profile \${profile.id}: exact method signature not found")
                 return@forEach
             }
             installPassThrough(key, profile, method)
@@ -151,7 +143,7 @@ class ModuleEntry : XposedModule() {
                             profile,
                             (System.nanoTime() - started) / 1_000_000L,
                             "ok",
-                            HookResultParser.parseKeyOnly(describe(result))
+                            HookResultParser.parseObject(result)
                         )
                         schedulePublish()
                         result
@@ -168,18 +160,10 @@ class ModuleEntry : XposedModule() {
                 }
             val registration = InstalledHook(HookProfileSignature.of(profile), handle)
             installed.put(key, registration)?.handle?.unhook()
-            log(Log.INFO, TAG, "Installed validated pass-through profile ${profile.id}")
+            log(Log.INFO, TAG, "Installed validated pass-through profile \${profile.id}")
         }.onFailure {
-            log(Log.ERROR, TAG, "Failed to install profile ${profile.id}: ${it.javaClass.simpleName}")
+            log(Log.ERROR, TAG, "Failed to install profile \${profile.id}: \${it.javaClass.simpleName}")
         }
-    }
-
-    /** Key-only stringification: bean keys are captured, all values are dropped here. */
-    private fun describe(value: Any?): String? = when (value) {
-        null -> null
-        is String -> null
-        is ByteArray -> "bytes=" + value.size
-        else -> runCatching { value.toString() }.getOrNull()
     }
 
     private fun schedulePublish() {
