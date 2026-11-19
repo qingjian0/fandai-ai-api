@@ -6,54 +6,62 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class HookResultParserTest {
-    private val request = """
-        okhttp3.Request POST
-        url=https://chat.example.com/v1/conversations/abc?token=SECRET
-        headers=[Authorization=Bearer SECRET, Content-Type=application/json, x-request-id=SECRET]
-        method=POST
-    """.trimIndent()
-
-    private val response = """
-        okhttp3.Response status=200
-        headers=[content-type=text/event-stream, set-cookie=SECRET]
-    """.trimIndent()
-
     @Test
-    fun requestExtractsShapeHostAndHeaderNamesOnly() {
-        val result = HookResultParser.parseKeyOnly(request)
+    fun requestMetadataContainsOnlyValidatedMethodHostAndHeaderNames() {
+        val result = HookResultParser.requestMetadata(
+            "okhttp3.Request",
+            "POST",
+            "chat.example.com",
+            listOf("Authorization", "Content-Type", "x-request-id", "bad header", "Authorization")
+        )
         assertEquals("okhttp3.Request", result.shape)
         assertEquals("chat.example.com", result.urlHost)
+        assertEquals("POST", result.bodyKind)
         assertEquals(listOf("Authorization", "Content-Type", "x-request-id"), result.fieldNames)
-        assertEquals(request.length.toLong(), result.byteLength)
+        assertEquals(3L, result.elementCount)
     }
 
     @Test
-    fun responseExtractsStatusAndHeaderNames() {
-        val result = HookResultParser.parseKeyOnly(response)
+    fun responseMetadataContainsOnlyStatusAndHeaderNames() {
+        val result = HookResultParser.responseMetadata(
+            "okhttp3.Response",
+            "200",
+            listOf("content-type", "set-cookie")
+        )
         assertEquals("okhttp3.Response", result.shape)
         assertEquals("200", result.status)
         assertEquals(listOf("content-type", "set-cookie"), result.fieldNames)
     }
 
     @Test
-    fun valuesNeverAppearInExtractedMetadata() {
-        val nested = "okhttp3.Request POST\nurl=https://h/SECRET\nheaders=[Cookie=SECRET]"
-        val result = HookResultParser.parseKeyOnly(nested)
+    fun invalidMetadataIsRejected() {
+        val result = HookResultParser.requestMetadata(
+            "not a class",
+            "POST /secret",
+            "host/path?token=SECRET",
+            listOf("Authorization: Bearer SECRET")
+        )
+        assertNull(result.shape)
+        assertNull(result.bodyKind)
+        assertNull(result.urlHost)
+        assertTrue(result.fieldNames.isEmpty())
         assertTrue(!result.toString().contains("SECRET"))
-        assertEquals(listOf("Cookie"), result.fieldNames)
     }
 
     @Test
-    fun opaqueAndEmptyInputsYieldEmptyResult() {
-        assertNull(HookResultParser.parseKeyOnly(null).shape)
-        assertTrue(HookResultParser.parseKeyOnly("plain text body").fieldNames.isEmpty())
-        assertNull(HookResultParser.parseKeyOnly("plain text body").shape)
+    fun parserNeverCallsArbitraryToString() {
+        val result = HookResultParser.parseObject(ExplosiveToString())
+        assertEquals(ExplosiveToString::class.java.name, result.shape)
     }
 
     @Test
-    fun headerNamesAreBoundedAndDeduplicated() {
-        val many = (1..40).joinToString(", ") { "h$it=v" }
-        val result = HookResultParser.parseKeyOnly("okhttp3.Request\nurl=https://a.b/\nheaders=[$many]")
-        assertEquals(HookEventCollector.MAX_FIELDS, result.fieldNames.size)
+    fun byteArraysAreRepresentedByLengthOnly() {
+        val result = HookResultParser.parseObject(byteArrayOf(1, 2, 3, 4))
+        assertEquals(4L, result.byteLength)
+        assertNull(result.shape)
+    }
+
+    private class ExplosiveToString {
+        override fun toString(): String = error("must not be called")
     }
 }
