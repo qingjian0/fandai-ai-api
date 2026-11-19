@@ -4,6 +4,8 @@ import android.app.Application
 import io.github.libxposed.service.XposedService
 import io.github.libxposed.service.XposedServiceHelper
 import java.util.concurrent.CopyOnWriteArraySet
+import java.util.concurrent.ExecutorService
+import java.util.concurrent.Executors
 
 class App : Application(), XposedServiceHelper.OnServiceListener {
     @Volatile
@@ -11,9 +13,14 @@ class App : Application(), XposedServiceHelper.OnServiceListener {
         private set
 
     private val listeners = CopyOnWriteArraySet<ServiceStateListener>()
+    private val profileIoExecutor: ExecutorService = Executors.newSingleThreadExecutor()
 
     interface ServiceStateListener {
         fun onServiceStateChanged(service: XposedService?)
+    }
+
+    fun executeProfileIo(task: () -> Unit) {
+        profileIoExecutor.execute(task)
     }
 
     fun addServiceStateListener(listener: ServiceStateListener) {
