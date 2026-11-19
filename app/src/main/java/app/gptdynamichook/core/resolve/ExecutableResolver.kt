@@ -35,9 +35,16 @@ object ExecutableResolver {
 
         var current: Class<*>? = owner
         while (current != null) {
-            val match = current.declaredMethods.firstOrNull { method ->
-                method.name == methodName && method.parameterTypes.contentEquals(parameterTypes)
-            }
+            // Reflection does not guarantee method enumeration order. Prefer the
+            // concrete implementation over compiler-generated bridge/synthetic
+            // methods when covariant returns produce the same parameter signature.
+            val match = current.declaredMethods
+                .asSequence()
+                .filter { method ->
+                    method.name == methodName && method.parameterTypes.contentEquals(parameterTypes)
+                }
+                .sortedWith(compareBy<Method> { it.isBridge }.thenBy { it.isSynthetic })
+                .firstOrNull()
             if (match != null) return match
             current = current.superclass
         }
