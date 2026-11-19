@@ -1,6 +1,7 @@
 package app.gptdynamichook.hook
 
 import android.util.Log
+import app.gptdynamichook.core.report.ResultShape
 import app.gptdynamichook.core.rules.HookRule
 import io.github.libxposed.api.XposedInterface
 import io.github.libxposed.api.XposedModule
@@ -110,10 +111,10 @@ class RuleEngine(
                             chain.proceed()
                         }
                         val finalResult = if (rewritten.replaceResult) rewritten.value else result
-                        record(rule, local, started, null)
+                        record(rule, local, started, null, finalResult)
                         finalResult
                     } catch (t: Throwable) {
-                        record(rule, local, started, t.javaClass.name)
+                        record(rule, local, started, t.javaClass.name, null)
                         throw t
                     }
                 }
@@ -195,7 +196,13 @@ class RuleEngine(
         else -> null
     }
 
-    private fun record(rule: HookRule, target: String, startedNanos: Long, throwable: String?) {
+    private fun record(
+        rule: HookRule,
+        target: String,
+        startedNanos: Long,
+        throwable: String?,
+        result: Any?
+    ) {
         val n = hits.incrementAndGet()
         val sample = samples.merge(rule.id, 1L) { a, _ -> a + 1 } ?: 1L
         if (sample % rule.sampleEvery.toLong() != 0L) return
@@ -211,6 +218,11 @@ class RuleEngine(
             val inside = target.substringAfter('(', "").substringBefore(')')
             val argc = if (inside.isBlank()) 0 else inside.count { it == ',' } + 1
             builder.append(",\"argCount\":").append(argc)
+        }
+        if (rule.captureResult) {
+            val shape = runCatching { ResultShape.describe(result) }
+                .getOrDefault("unavailable")
+            builder.append(",\"").append("resultShape\":\"").append(escape(shape)).append('"')
         }
         if (rule.captureStack > 0) {
             builder.append(",\"stack\":[")
