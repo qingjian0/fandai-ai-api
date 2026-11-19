@@ -11,15 +11,25 @@ class ProfileStore(private val service: XposedService) {
     fun load(): List<HookProfile> =
         HookProfileCodec.decode(preferences.getString(PROFILES_KEY, "[]"))
 
+    /** Upsert by stable profile ID; changing a target must not create a second profile. */
     fun save(profile: HookProfile): Boolean {
-        val current = load().filterNot {
-            it.targetPackage == profile.targetPackage &&
-                it.className == profile.className &&
-                it.methodName == profile.methodName &&
-                it.parameterTypeNames == profile.parameterTypeNames
-        }
+        val next = ProfileCollection.upsert(load(), profile)
         return preferences.edit()
-            .putString(PROFILES_KEY, HookProfileCodec.encode(current + profile))
+            .putString(PROFILES_KEY, HookProfileCodec.encode(next))
+            .commit()
+    }
+
+    fun delete(profileId: String): Boolean {
+        val next = ProfileCollection.delete(load(), profileId)
+        return preferences.edit()
+            .putString(PROFILES_KEY, HookProfileCodec.encode(next))
+            .commit()
+    }
+
+    fun setEnabled(profileId: String, enabled: Boolean): Boolean {
+        val next = ProfileCollection.setEnabled(load(), profileId, enabled)
+        return preferences.edit()
+            .putString(PROFILES_KEY, HookProfileCodec.encode(next))
             .commit()
     }
 
