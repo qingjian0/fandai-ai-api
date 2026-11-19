@@ -22,9 +22,10 @@ object HookProfileCodec {
     }
 
     fun decode(raw: String?): List<HookProfile> {
-        if (raw.isNullOrBlank()) return emptyList()
+        if (raw.isNullOrBlank() || raw.length > MAX_ENCODED_LENGTH) return emptyList()
         return runCatching {
             val array = JSONArray(raw)
+            require(array.length() <= MAX_PROFILES) { "too_many_profiles" }
             buildList {
                 for (index in 0 until array.length()) {
                     val item = array.getJSONObject(index)
@@ -47,4 +48,7 @@ object HookProfileCodec {
             }
         }.getOrDefault(emptyList())
     }
+
+    private const val MAX_PROFILES = 512
+    private const val MAX_ENCODED_LENGTH = 1_048_576
 }
