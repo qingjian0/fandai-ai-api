@@ -1,22 +1,13 @@
 package app.gptdynamichook.core.report
 
 /**
- * Extracts a method result into bounded, key-only JSON metadata.
- *
- * Only names and shapes are extracted. Values, characters, collection elements
- * and exception messages never leave the target process, so a captured report
- * cannot carry request bodies, tokens or user content.
+ * Extracts bounded, key-only metadata from the textual shape of known request
+ * and response objects. Callers must never persist or log the input string.
  */
 object HookResultParser {
-    private const val TYPE_NAME_PREFIX = "L"
-    private val idPattern = Regex("^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$")
     private val classPattern = Regex("^[A-Za-z_$][A-Za-z0-9_$.]*$")
     private val memberPattern = Regex("^[A-Za-z_$][A-Za-z0-9_$]*$")
-    private val parameterTypePattern = Regex(
-        "^(boolean|byte|char|short|int|long|float|double|" +
-            "[A-Za-z_$][A-Za-z0-9_$]*(\\.[A-Za-z_$][A-Za-z0-9_$]*)*)" +
-            "(\\[\\])*$"
-    )
+    private val statusPattern = Regex("^[1-5][0-9]{2}$")
     private val headerFieldPattern = Regex("^[A-Za-z0-9!#$%&'*+.^_`|~-]{1,64}$")
     private val authSchemePattern = Regex("^(Bearer|Basic|Digest|MAC|AWS4-HMAC-SHA256)$")
 
@@ -24,26 +15,22 @@ object HookResultParser {
         val text = raw ?: return HookResult()
         if (text.isEmpty()) return HookResult()
 
-        // --- okhttp3.Request: shape + header names only ---
-        val urlIndex = text.indexOf("\nurl=")
-        val headerIndex = text.indexOf("\nheaders=[")
+        val firstLine = text.substringBefore('\n')
+        val className = firstLine.substringBefore(' ')
+        if (!classPattern.matches(className)) return HookResult(byteLength = text.length.toLong())
+
+        // okhttp3.Request.toString() renders URL and headers. Only host, method
+        // and header names are copied to the result; values are never retained.
+        val urlIndex = text.indexOf("\\nurl=")
+        val headerIndex = text.indexOf("\\nheaders=[")
         if (urlIndex > 0 && headerIndex > urlIndex) {
-            val prefix = text.substring(0, urlIndex)
-            val method = prefix.substringBefore(' ')
+            val method = firstLine.substringAfter(' ', "")
             val host = extractUrlHost(text.substring(urlIndex + 5, headerIndex))
             val headers = extractHeaderFieldNames(text.substring(headerIndex + 10))
             return HookResult(
-                shape = if (classPattern.matches(shapeOf(text.substringBefore("\n", prefix)))) {
-                    text.substringBefore("\n", prefix).substringBefore(' ')
-                } else {
-                    "Request"
-                },
-                shapeClass = if (classPattern.matches(text.substringBefore("\n", prefix))) {
-                    text.substringBefore("\n", prefix)
-                } else {
-                    null
-                },
-                bodyKind = if (memberPattern.matches(method)) method else null,
+                shape = className,
+                shapeClass = className,
+                bodyKind = method.takeIf(memberPattern::matches),
                 byteLength = text.length.toLong(),
                 elementCount = headers.size.toLong(),
                 urlHost = host,
@@ -51,27 +38,25 @@ object HookResultParser {
             )
         }
 
-        // --- okhttp3.Response: shape + header names only ---
-        val responseHeaderIndex = text.indexOf("\nheaders=[")
+        // okhttp3.Response.toString() starts with "okhttp3.Response{protocol=...,
+        // code=200, ...}" in some versions and "okhttp3.Response status=200" in
+        // diagnostic wrappers. Parse only a three-digit status token.
+        val responseHeaderIndex = text.indexOf("\\nheaders=[")
         if (responseHeaderIndex > 0) {
-            val prefix = text.substring(0, responseHeaderIndex).substringBefore("\n")
-            val status = text.substring(0, responseHeaderIndex).substringAfter(' ', "")
+            val statusToken = Regex("(?:^|\\\\s)status=([0-9]{3})(?:\\\\s|$)")
+                .find(firstLine)?.groupValues?.getOrNull(1)
             val headers = extractHeaderFieldNames(text.substring(responseHeaderIndex + 10))
             return HookResult(
-                shape = if (classPattern.matches(prefix)) prefix else "Response",
-                shapeClass = null,
-                bodyKind = null,
+                shape = className,
                 byteLength = text.length.toLong(),
                 elementCount = headers.size.toLong(),
-                status = if (memberPattern.matches(status)) status else null,
+                status = statusToken?.takeIf(statusPattern::matches),
                 fieldNames = headers
             )
         }
 
-        return HookResult(byteLength = text.length.toLong())
+        return HookResult(shape = className.takeIf(classPattern::matches), byteLength = text.length.toLong())
     }
-
-    private fun shapeOf(prefix: String): String = prefix.substringBefore('\n').substringBefore(' ')
 
     private fun extractUrlHost(section: String): String? {
         val url = section.substringBefore('\n')
@@ -82,7 +67,7 @@ object HookResultParser {
         val host = tail.substringBefore('/').substringBefore('?').substringAfterLast('@')
         if (host.length > 253) return null
         if (!Regex("^[A-Za-z0-9.-]+(:[0-9]{1,5})?$").matches(host)) return null
-        return host
+        return host.substringBefore(':')
     }
 
     private fun extractHeaderFieldNames(section: String): List<String> {
@@ -94,7 +79,7 @@ object HookResultParser {
             .map { it.substringBefore('=').trim() }
             .filter { headerFieldPattern.matches(it) && !authSchemePattern.matches(it) }
             .distinct()
-            .take(16)
+            .take(HookEventCollector.MAX_FIELDS)
     }
 
     data class HookResult(
