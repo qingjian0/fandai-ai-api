@@ -1,6 +1,7 @@
 package app.gptdynamichook
 
 import android.app.Activity
+import android.app.AlertDialog
 import android.os.Bundle
 import android.view.ViewGroup
 import android.widget.Button
@@ -14,6 +15,7 @@ import app.gptdynamichook.core.model.HookProfile
 import app.gptdynamichook.core.store.ProfileStore
 import app.gptdynamichook.core.validation.HookProfileValidator
 import io.github.libxposed.service.XposedService
+import java.util.UUID
 
 class MainActivity : Activity(), App.ServiceStateListener {
     private lateinit var status: TextView
@@ -87,7 +89,7 @@ class MainActivity : Activity(), App.ServiceStateListener {
             setOnClickListener { saveProfile() }
         })
         content.addView(Button(this).apply {
-            text = "取消编辑"
+            text = "取消编辑 / 新建"
             setOnClickListener { clearEditor() }
         })
         content.addView(TextView(this).apply {
@@ -131,7 +133,7 @@ class MainActivity : Activity(), App.ServiceStateListener {
         val targetPackage = packageInput.text.toString().trim()
         val className = classInput.text.toString().trim()
         val methodName = methodInput.text.toString().trim()
-        val id = editingProfileId ?: "profile-${targetPackage.hashCode()}-${className.hashCode()}-${methodName.hashCode()}-${parameters.hashCode()}"
+        val id = editingProfileId ?: "profile-${UUID.randomUUID()}"
         val profile = HookProfile(
             id = id,
             targetPackage = targetPackage,
@@ -177,19 +179,25 @@ class MainActivity : Activity(), App.ServiceStateListener {
                 text = "${profile.targetPackage}\n${profile.className}#${profile.methodName}(${profile.parameterTypeNames.joinToString()})\nID: ${profile.id}"
                 textSize = 13f
             })
-            item.addView(CheckBox(this).apply {
+            val enabledToggle = CheckBox(this).apply {
                 text = "启用"
                 isChecked = profile.enabled
-                setOnCheckedChangeListener { _, checked ->
-                    val saved = runCatching {
-                        ProfileStore(activeService).setEnabled(profile.id, checked)
-                    }.getOrDefault(false)
-                    if (!saved) {
-                        isChecked = !checked
-                        toast("更新启用状态失败")
-                    }
+            }
+            var restoringToggle = false
+            enabledToggle.setOnCheckedChangeListener { button, checked ->
+                if (restoringToggle) return@setOnCheckedChangeListener
+                val saved = runCatching {
+                    ProfileStore(activeService).setEnabled(profile.id, checked)
+                }.getOrDefault(false)
+                if (!saved) {
+                    restoringToggle = true
+                    button.isChecked = !checked
+                    restoringToggle = false
+                    toast("更新启用状态失败")
                 }
-            })
+            }
+            item.addView(enabledToggle)
+
             val actions = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
             actions.addView(Button(this).apply {
                 text = "编辑"
@@ -198,11 +206,21 @@ class MainActivity : Activity(), App.ServiceStateListener {
             actions.addView(Button(this).apply {
                 text = "删除"
                 setOnClickListener {
-                    val deleted = runCatching {
-                        ProfileStore(activeService).delete(profile.id)
-                    }.getOrDefault(false)
-                    toast(if (deleted) "Profile 已删除" else "删除失败")
-                    if (deleted) reloadProfiles()
+                    AlertDialog.Builder(this@MainActivity)
+                        .setTitle("删除 Profile")
+                        .setMessage("确定删除 ${profile.id} 吗？此操作不可撤销。")
+                        .setNegativeButton("取消", null)
+                        .setPositiveButton("删除") { _, _ ->
+                            val deleted = runCatching {
+                                ProfileStore(activeService).delete(profile.id)
+                            }.getOrDefault(false)
+                            toast(if (deleted) "Profile 已删除" else "删除失败")
+                            if (deleted) {
+                                if (editingProfileId == profile.id) clearEditor()
+                                reloadProfiles()
+                            }
+                        }
+                        .show()
                 }
             })
             item.addView(actions)
