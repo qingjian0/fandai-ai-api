@@ -37,7 +37,7 @@ class HookReportCodecTest {
             )
         }
         val json = HookReportCodec.encode(collector.drain(), "com.openai.chatgpt")
-        assertTrue(json.length <= HookReportCodec.MAX_ENCODED_LENGTH)
+        assertTrue(json.toByteArray(Charsets.UTF_8).size <= HookReportCodec.MAX_ENCODED_LENGTH)
         val root = JSONObject(json)
         assertEquals(1, root.getInt("schemaVersion"))
         assertEquals("com.openai.chatgpt", root.getString("targetPackage"))
@@ -99,7 +99,7 @@ class HookReportCodecTest {
         // Simulate encode/transport failure: no acknowledgement is issued.
         val retry = collector.snapshot()
         assertEquals(firstAttempt, retry)
-        assertEquals(3, retry.counts["p1|ok"])
+        assertEquals(3L, retry.counts["p1|ok"])
         assertEquals(3, retry.events.size)
         assertTrue(!collector.isEmpty())
 
