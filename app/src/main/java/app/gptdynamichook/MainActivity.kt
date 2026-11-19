@@ -27,6 +27,7 @@ class MainActivity : Activity(), App.ServiceStateListener {
     private lateinit var profilesContainer: LinearLayout
     private var service: XposedService? = null
     private var editingProfileId: String? = null
+    private var profileLoadGeneration = 0
     private val app get() = application as App
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -41,12 +42,14 @@ class MainActivity : Activity(), App.ServiceStateListener {
 
     override fun onStop() {
         app.removeServiceStateListener(this)
+        profileLoadGeneration++
         super.onStop()
     }
 
     override fun onServiceStateChanged(service: XposedService?) {
         this.service = service
         runOnUiThread {
+            if (isFinishing || isDestroyed) return@runOnUiThread
             status.text = if (service == null) {
                 "LSPosed 服务未连接。请确认已安装兼容的 LSPosed/libxposed 框架并启用本模块。"
             } else {
@@ -130,15 +133,11 @@ class MainActivity : Activity(), App.ServiceStateListener {
             .split(',')
             .map(String::trim)
             .filter(String::isNotEmpty)
-        val targetPackage = packageInput.text.toString().trim()
-        val className = classInput.text.toString().trim()
-        val methodName = methodInput.text.toString().trim()
-        val id = editingProfileId ?: "profile-${UUID.randomUUID()}"
         val profile = HookProfile(
-            id = id,
-            targetPackage = targetPackage,
-            className = className,
-            methodName = methodName,
+            id = editingProfileId ?: "profile-${UUID.randomUUID()}",
+            targetPackage = packageInput.text.toString().trim(),
+            className = classInput.text.toString().trim(),
+            methodName = methodInput.text.toString().trim(),
             parameterTypeNames = parameters,
             enabled = enabledInput.isChecked
         )
@@ -148,24 +147,49 @@ class MainActivity : Activity(), App.ServiceStateListener {
             return
         }
 
-        val saved = runCatching { ProfileStore(activeService).save(profile) }.getOrDefault(false)
-        toast(if (saved) "Profile 已保存" else "保存失败，请检查框架远程配置能力")
-        if (saved) {
-            clearEditor()
-            reloadProfiles()
+        app.executeProfileIo {
+            val result = runCatching { ProfileStore(activeService).save(profile) }
+            runOnUiThread {
+                if (isFinishing || isDestroyed) return@runOnUiThread
+                val saved = result.getOrDefault(false)
+                toast(if (saved) "Profile 已保存" else "保存失败，请检查框架远程配置能力")
+                if (saved) {
+                    clearEditor()
+                    reloadProfiles()
+                }
+            }
         }
     }
 
     private fun reloadProfiles() {
+        val generation = ++profileLoadGeneration
         profilesContainer.removeAllViews()
         val activeService = service ?: run {
             profilesContainer.addView(TextView(this).apply { text = "连接 LSPosed 后显示 Profile 列表" })
             return
         }
-        val profiles = runCatching { ProfileStore(activeService).load() }.getOrElse {
-            profilesContainer.addView(TextView(this).apply { text = "读取 Profile 失败：${it.javaClass.simpleName}" })
-            return
+        profilesContainer.addView(TextView(this).apply { text = "正在读取 Profile…" })
+
+        app.executeProfileIo {
+            val result = runCatching { ProfileStore(activeService).load() }
+            runOnUiThread {
+                if (isFinishing || isDestroyed || generation != profileLoadGeneration ||
+                    service !== activeService
+                ) return@runOnUiThread
+                val profiles = result.getOrElse {
+                    profilesContainer.removeAllViews()
+                    profilesContainer.addView(TextView(this).apply {
+                        text = "读取 Profile 失败：${it.javaClass.simpleName}"
+                    })
+                    return@runOnUiThread
+                }
+                renderProfiles(activeService, profiles)
+            }
         }
+    }
+
+    private fun renderProfiles(activeService: XposedService, profiles: List<HookProfile>) {
+        profilesContainer.removeAllViews()
         if (profiles.isEmpty()) {
             profilesContainer.addView(TextView(this).apply { text = "暂无 Profile" })
             return
@@ -186,14 +210,21 @@ class MainActivity : Activity(), App.ServiceStateListener {
             var restoringToggle = false
             enabledToggle.setOnCheckedChangeListener { button, checked ->
                 if (restoringToggle) return@setOnCheckedChangeListener
-                val saved = runCatching {
-                    ProfileStore(activeService).setEnabled(profile.id, checked)
-                }.getOrDefault(false)
-                if (!saved) {
-                    restoringToggle = true
-                    button.isChecked = !checked
-                    restoringToggle = false
-                    toast("更新启用状态失败")
+                button.isEnabled = false
+                app.executeProfileIo {
+                    val result = runCatching {
+                        ProfileStore(activeService).setEnabled(profile.id, checked)
+                    }
+                    runOnUiThread {
+                        if (isFinishing || isDestroyed) return@runOnUiThread
+                        button.isEnabled = true
+                        if (!result.getOrDefault(false)) {
+                            restoringToggle = true
+                            button.isChecked = !checked
+                            restoringToggle = false
+                            toast("更新启用状态失败")
+                        }
+                    }
                 }
             }
             item.addView(enabledToggle)
@@ -211,13 +242,19 @@ class MainActivity : Activity(), App.ServiceStateListener {
                         .setMessage("确定删除 ${profile.id} 吗？此操作不可撤销。")
                         .setNegativeButton("取消", null)
                         .setPositiveButton("删除") { _, _ ->
-                            val deleted = runCatching {
-                                ProfileStore(activeService).delete(profile.id)
-                            }.getOrDefault(false)
-                            toast(if (deleted) "Profile 已删除" else "删除失败")
-                            if (deleted) {
-                                if (editingProfileId == profile.id) clearEditor()
-                                reloadProfiles()
+                            app.executeProfileIo {
+                                val result = runCatching {
+                                    ProfileStore(activeService).delete(profile.id)
+                                }
+                                runOnUiThread {
+                                    if (isFinishing || isDestroyed) return@runOnUiThread
+                                    val deleted = result.getOrDefault(false)
+                                    toast(if (deleted) "Profile 已删除" else "删除失败")
+                                    if (deleted) {
+                                        if (editingProfileId == profile.id) clearEditor()
+                                        reloadProfiles()
+                                    }
+                                }
                             }
                         }
                         .show()
