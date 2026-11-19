@@ -3,7 +3,7 @@ package app.gptdynamichook.core.report
 import org.json.JSONArray
 import org.json.JSONObject
 
-/** Serializes a drained snapshot into the bounded key-only report schema. */
+/** Serializes a bounded observation snapshot into the bounded key-only report schema. */
 object HookReportCodec {
     const val SCHEMA_VERSION = 1
     const val MAX_ENCODED_LENGTH = HookEventCollector.maxEncodedBytes
@@ -29,6 +29,14 @@ object HookReportCodec {
                 .put("id", event.profileId)
                 .put("outcome", event.outcome)
                 .put("elapsedMs", event.elapsedMs)
+            event.arguments?.let { arguments ->
+                item.put(
+                    "arguments",
+                    JSONObject()
+                        .put("count", arguments.elementCount ?: arguments.argumentTypes.size)
+                        .put("types", JSONArray(arguments.argumentTypes.take(MAX_FIELDS)))
+                )
+            }
             event.result?.let { result ->
                 val keys = JSONObject()
                 result.shape?.let { keys.put("shape", it) }
