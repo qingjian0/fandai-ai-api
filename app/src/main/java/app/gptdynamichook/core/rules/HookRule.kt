@@ -39,5 +39,9 @@ data class HookRule(
     /** Skip the original method entirely and return [rewriteResult]. */
     val rewriteSkip: Boolean = false,
     /** Log the decision without changing anything; used to verify a rewrite safely. */
-    val rewriteDryRun: Boolean = false
+    val rewriteDryRun: Boolean = false,
+    /** Registers the call object in the reflective channel under this name. */
+    val expose: String = "",
+    /** What to expose: "self" (default), "result", or "arg0". */
+    val exposeTarget: String = "self"
 )
