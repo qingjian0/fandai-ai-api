@@ -51,7 +51,7 @@ internal data class PackageIdentity(
             val application = runCatching {
                 type.getDeclaredMethod("currentApplication").apply {
                     isAccessible = true
-                }.invoke(thread) as? Application
+                }.invoke(null) as? Application
             }.getOrNull()
             if (application != null) return application
 
@@ -78,7 +78,7 @@ internal data class PackageIdentity(
             if (certificates.size != 1) return null
             return MessageDigest.getInstance("SHA-256")
                 .digest(certificates.single().toByteArray())
-                .joinToString("") { byte -> "%02x".format(byte) }
+                .joinToString("") { byte -> "%02x".format(byte.toInt() and 0xFF) }
         }
     }
 }
