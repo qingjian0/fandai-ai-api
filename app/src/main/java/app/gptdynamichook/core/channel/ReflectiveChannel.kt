@@ -35,7 +35,10 @@ object ReflectiveChannel {
         val args: List<String> = emptyList(),
         val depth: Int = 2,
         val maxOps: Int = 400,
-        val emitValues: Boolean = false
+        val emitValues: Boolean = false,
+        val method: String? = null,
+        val headers: Map<String, String> = emptyMap(),
+        val body: String? = null
     )
 
     /** Live objects the operator has asked to keep addressable by name. */
@@ -55,6 +58,7 @@ object ReflectiveChannel {
         try {
             when (command.type) {
                 "list" -> out.put("registered", JSONArray(registry.keys.toList()))
+                "http" -> out.put("result", httpCommand(command))
                 "dump" -> out.put("result", dump(resolve(command), command.depth, command.emitValues, 0))
                 "get" -> out.put("result", getPath(resolve(command), command.path, command.emitValues))
                 "set" -> out.put("result", setPath(resolve(command), command.path, command.value))
@@ -67,6 +71,41 @@ object ReflectiveChannel {
         }
         out.put("ops", ops)
         return out
+    }
+
+    /**
+     * Issues a request from inside the target process.
+     *
+     * The client authenticates with DPoP, whose signing key never leaves the
+     * process, so a request forged elsewhere cannot be authenticated. Only the
+     * operator supplied URL, headers and body are used; nothing is read from app
+     * state.
+     */
+    private fun httpCommand(command: Command): Any {
+        val url = command.target ?: throw IllegalStateException("target_required_as_url")
+        val connection = java.net.URL(url).openConnection() as java.net.HttpURLConnection
+        connection.requestMethod = (command.method ?: "GET").uppercase()
+        connection.connectTimeout = 15000
+        connection.readTimeout = 20000
+        command.headers.forEach { (k, v) -> connection.setRequestProperty(k, v) }
+        val body = command.body
+        if (body != null) {
+            connection.doOutput = true
+            connection.setRequestProperty("Content-Type", "application/json")
+            connection.outputStream.use { it.write(body.toByteArray(Charsets.UTF_8)) }
+        }
+        val result = JSONObject()
+        val code = runCatching { connection.responseCode }.getOrDefault(-1)
+        result.put("status", code)
+        val stream = runCatching {
+            if (code in 200..299) connection.inputStream else connection.errorStream
+        }.getOrNull()
+        val text = stream?.let { input ->
+            runCatching { input.bufferedReader().use { it.readText().take(4096) } }.getOrNull()
+        }
+        result.put("body", text ?: "")
+        runCatching { connection.disconnect() }
+        return result
     }
 
     private fun resolve(command: Command): Any {
