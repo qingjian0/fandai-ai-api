@@ -123,7 +123,7 @@ class HookReportCodecTest {
     @Test
     fun encodedReportRespectsUtf8ByteBudgetForMultibyteProfileIds() {
         val collector = HookEventCollector(capacity = 2)
-        val largeProfile = profile.copy(id = "界".repeat(3_000))
+        val largeProfile = profile.copy(id = "界".repeat(12_000))
         collector.record(largeProfile, 1L, "ok", null)
 
         val json = HookReportCodec.encode(collector.snapshot(), "com.openai.chatgpt")
