@@ -22,7 +22,9 @@ class MainActivity : Activity(), App.ServiceStateListener {
     private lateinit var methodInput: EditText
     private lateinit var parametersInput: EditText
     private lateinit var enabledInput: CheckBox
+    private lateinit var profilesContainer: LinearLayout
     private var service: XposedService? = null
+    private var editingProfileId: String? = null
     private val app get() = application as App
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -48,6 +50,7 @@ class MainActivity : Activity(), App.ServiceStateListener {
             } else {
                 "已连接：${service.frameworkName} ${service.frameworkVersion} / API ${service.apiVersion}\n当前作用域：${service.scope.joinToString()}"
             }
+            reloadProfiles()
         }
     }
 
@@ -83,6 +86,19 @@ class MainActivity : Activity(), App.ServiceStateListener {
             text = "保存 Profile"
             setOnClickListener { saveProfile() }
         })
+        content.addView(Button(this).apply {
+            text = "取消编辑"
+            setOnClickListener { clearEditor() }
+        })
+        content.addView(TextView(this).apply {
+            text = "已保存的 Profiles"
+            textSize = 19f
+            setPadding(0, 24, 0, 8)
+        })
+        profilesContainer = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+        }
+        content.addView(profilesContainer)
         content.addView(TextView(this).apply {
             text = "安全说明：配置默认禁用；只有在 LSPosed 已授权的作用域内，且包名、类名、方法名和参数签名全部匹配时，才会安装透传 Hook。"
             textSize = 13f
@@ -104,7 +120,7 @@ class MainActivity : Activity(), App.ServiceStateListener {
     private fun saveProfile() {
         val activeService = service
         if (activeService == null) {
-            Toast.makeText(this, "LSPosed 服务未连接，无法保存跨进程 Profile", Toast.LENGTH_LONG).show()
+            toast("LSPosed 服务未连接，无法保存跨进程 Profile")
             return
         }
 
@@ -115,7 +131,7 @@ class MainActivity : Activity(), App.ServiceStateListener {
         val targetPackage = packageInput.text.toString().trim()
         val className = classInput.text.toString().trim()
         val methodName = methodInput.text.toString().trim()
-        val id = "profile-${targetPackage.hashCode()}-${className.hashCode()}-${methodName.hashCode()}-${parameters.hashCode()}"
+        val id = editingProfileId ?: "profile-${targetPackage.hashCode()}-${className.hashCode()}-${methodName.hashCode()}-${parameters.hashCode()}"
         val profile = HookProfile(
             id = id,
             targetPackage = targetPackage,
@@ -126,15 +142,100 @@ class MainActivity : Activity(), App.ServiceStateListener {
         )
         val errors = HookProfileValidator.validate(profile)
         if (errors.isNotEmpty()) {
-            Toast.makeText(this, "配置无效：${errors.joinToString()}", Toast.LENGTH_LONG).show()
+            toast("配置无效：${errors.joinToString()}")
             return
         }
 
         val saved = runCatching { ProfileStore(activeService).save(profile) }.getOrDefault(false)
-        Toast.makeText(
-            this,
-            if (saved) "Profile 已写入 LSPosed 远程配置" else "保存失败，请检查框架远程配置能力",
-            Toast.LENGTH_LONG
-        ).show()
+        toast(if (saved) "Profile 已保存" else "保存失败，请检查框架远程配置能力")
+        if (saved) {
+            clearEditor()
+            reloadProfiles()
+        }
+    }
+
+    private fun reloadProfiles() {
+        profilesContainer.removeAllViews()
+        val activeService = service ?: run {
+            profilesContainer.addView(TextView(this).apply { text = "连接 LSPosed 后显示 Profile 列表" })
+            return
+        }
+        val profiles = runCatching { ProfileStore(activeService).load() }.getOrElse {
+            profilesContainer.addView(TextView(this).apply { text = "读取 Profile 失败：${it.javaClass.simpleName}" })
+            return
+        }
+        if (profiles.isEmpty()) {
+            profilesContainer.addView(TextView(this).apply { text = "暂无 Profile" })
+            return
+        }
+        profiles.forEach { profile ->
+            val item = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                setPadding(0, 12, 0, 12)
+            }
+            item.addView(TextView(this).apply {
+                text = "${profile.targetPackage}\n${profile.className}#${profile.methodName}(${profile.parameterTypeNames.joinToString()})\nID: ${profile.id}"
+                textSize = 13f
+            })
+            item.addView(CheckBox(this).apply {
+                text = "启用"
+                isChecked = profile.enabled
+                setOnCheckedChangeListener { _, checked ->
+                    val saved = runCatching {
+                        ProfileStore(activeService).setEnabled(profile.id, checked)
+                    }.getOrDefault(false)
+                    if (!saved) {
+                        isChecked = !checked
+                        toast("更新启用状态失败")
+                    }
+                }
+            })
+            val actions = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+            actions.addView(Button(this).apply {
+                text = "编辑"
+                setOnClickListener { editProfile(profile) }
+            })
+            actions.addView(Button(this).apply {
+                text = "删除"
+                setOnClickListener {
+                    val deleted = runCatching {
+                        ProfileStore(activeService).delete(profile.id)
+                    }.getOrDefault(false)
+                    toast(if (deleted) "Profile 已删除" else "删除失败")
+                    if (deleted) reloadProfiles()
+                }
+            })
+            item.addView(actions)
+            profilesContainer.addView(item)
+            profilesContainer.addView(android.view.View(this).apply {
+                setBackgroundColor(0xFFE0E0E0.toInt())
+                layoutParams = LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, 1
+                )
+            })
+        }
+    }
+
+    private fun editProfile(profile: HookProfile) {
+        editingProfileId = profile.id
+        packageInput.setText(profile.targetPackage)
+        classInput.setText(profile.className)
+        methodInput.setText(profile.methodName)
+        parametersInput.setText(profile.parameterTypeNames.joinToString(","))
+        enabledInput.isChecked = profile.enabled
+        toast("正在编辑 ${profile.id}")
+    }
+
+    private fun clearEditor() {
+        editingProfileId = null
+        packageInput.setText("com.openai.chatgpt")
+        classInput.setText("com.example.Target")
+        methodInput.setText("send")
+        parametersInput.setText("java.lang.String")
+        enabledInput.isChecked = false
+    }
+
+    private fun toast(message: String) {
+        Toast.makeText(this, message, Toast.LENGTH_LONG).show()
     }
 }
