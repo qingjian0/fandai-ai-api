@@ -32,6 +32,17 @@ class HookProfileSignatureTest {
     }
 
     @Test
+    fun changingVersionOrSignerPinChangesInstalledHookIdentity() {
+        val original = profile()
+        val signature = HookProfileSignature.of(original)
+        assertNotEquals(signature, HookProfileSignature.of(original.copy(targetVersionCode = 123L)))
+        assertNotEquals(
+            signature,
+            HookProfileSignature.of(original.copy(targetSignerSha256 = "a".repeat(64)))
+        )
+    }
+
+    @Test
     fun delimiterCharactersCannotCreateSignatureCollisions() {
         val first = HookProfileSignature.of(profile(parameters = listOf("a,b", "c")))
         val second = HookProfileSignature.of(profile(parameters = listOf("a", "b,c")))
