@@ -175,6 +175,7 @@ class ModuleEntry : XposedModule() {
                 val snapshot = collector.drain()
                 val json = HookReportCodec.encode(snapshot, targetPackage)
                 log(Log.INFO, TAG, "observation-report: " + json)
+                ReportRelay.publish(json)
             }, REPORT_DEBOUNCE_MS, TimeUnit.MILLISECONDS)
         }.onFailure { publishQueued.set(false) }
     }
