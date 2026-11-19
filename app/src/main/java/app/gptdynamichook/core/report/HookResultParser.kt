@@ -45,7 +45,10 @@ object HookResultParser {
             if (value == null) {
                 "null"
             } else {
-                val name = value.javaClass.canonicalName ?: value.javaClass.name
+                // Use Class.name consistently: canonicalName rewrites nested-class
+                // binary names ($) and made runtime type reports differ from the
+                // exact JVM class identity expected by the resolver/debugger.
+                val name = value.javaClass.name
                 name.takeIf(argumentTypePattern::matches) ?: "unknown"
             }
         }
