@@ -34,4 +34,17 @@ class ProfileCollectionTest {
             ProfileCollection.setEnabled(listOf(first, second), "one", true)
         )
     }
+
+    @Test fun disabledProfilesAreNeverSelectedForHookInstallation() {
+        val disabled = profile("off", enabled = false)
+        val enabled = profile("on", enabled = true)
+        assertEquals(listOf(enabled), ProfileCollection.enabledOnly(listOf(disabled, enabled)))
+    }
+
+    @Test fun allDisabledProfilesProduceNoHookInstallations() {
+        assertEquals(
+            emptyList<HookProfile>(),
+            ProfileCollection.enabledOnly(listOf(profile("off-a"), profile("off-b")))
+        )
+    }
 }
