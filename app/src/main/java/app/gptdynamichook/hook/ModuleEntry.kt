@@ -12,6 +12,7 @@ import app.gptdynamichook.core.resolve.ExecutableResolver
 import app.gptdynamichook.core.store.ProfileCollection
 import app.gptdynamichook.core.store.ProfileStore
 import app.gptdynamichook.core.validation.HookProfileValidator
+import app.gptdynamichook.core.validation.TargetPin
 import io.github.libxposed.api.XposedInterface
 import io.github.libxposed.api.XposedModule
 import io.github.libxposed.api.XposedModuleInterface.ModuleLoadedParam
@@ -115,6 +116,17 @@ class ModuleEntry : XposedModule() {
         active.forEach { profile ->
             val key = hookKey(packageName, profile.id)
             if (installed.containsKey(key)) return@forEach
+
+            val identity = PackageIdentity.of(packageName)
+            val pinFailure = TargetPin.mismatchReason(
+                profile,
+                identity.versionCode,
+                identity.signerSha256
+            )
+            if (pinFailure != null) {
+                log(Log.WARN, TAG, "Profile ${profile.id} rejected by pin: $pinFailure")
+                return@forEach
+            }
 
             val method = ExecutableResolver.resolveMethod(
                 classLoader,
