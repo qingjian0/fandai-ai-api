@@ -22,6 +22,14 @@ data class HookRule(
     val captureElapsed: Boolean = true,
     /** Number of parameters recorded by type only; values are never read. */
     val captureArgTypes: Int = 0,
+    /**
+     * Shape-only snapshot of the return value: container kind, size, member
+     * names and member types. Never the values themselves, and never strings
+     * longer than their length/hash. 0 disables it.
+     */
+    val captureResult: Boolean = false,
+    /** Max members reported for map/collection snapshots. */
+    val captureResultDepth: Int = 24,
     val sampleEvery: Int = 1,
     val maxHooks: Int = 64,
     /** Argument index -> literal replacement. Values are operator-supplied, never app data. */
