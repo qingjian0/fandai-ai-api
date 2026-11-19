@@ -7,45 +7,49 @@ import android.net.Uri
 import android.os.Binder
 import android.os.Bundle
 import android.util.Log
+import org.json.JSONObject
 
 /**
  * Receives sanitized observation reports from the hooked target process and
  * exposes them to the module UI.
  *
- * Access rules:
- *  - `publish` is writable only by a UID that owns the configured target package.
- *    The provider is exported because the target app has a different UID; the
- *    UID check is what actually gates it.
- *  - `read` / `clear` are restricted to the module app's own UID.
- *  - No query/insert/update/delete surface: reports cannot become a data store.
- *
- * The payload is bounded before it is accepted, so a misbehaving caller cannot
- * grow module memory without limit.
+ * publish is limited to the configured target UID and a schema-v1 payload
+ * whose declared target matches the authorized package. read/clear are
+ * restricted to the module app UID.
  */
 class ObservationProvider : ContentProvider() {
     override fun onCreate(): Boolean = true
 
     override fun call(method: String, arg: String?, extras: Bundle?): Bundle {
         val caller = Binder.getCallingUid()
-        val self = context?.applicationInfo?.uid ?: -1
         return when (method) {
             METHOD_PUBLISH -> publish(caller, extras)
             METHOD_READ -> read(caller)
             METHOD_CLEAR -> clear(caller)
             else -> denied("unsupported method")
-        }.also { if (self < 0) Log.w(TAG, "provider has no context") }
+        }
     }
 
     private fun publish(caller: Int, extras: Bundle?): Bundle {
         val payload = extras?.getString(KEY_REPORT).orEmpty()
-        if (payload.length > MAX_REPORT_BYTES) {
-            return denied("report exceeds ${MAX_REPORT_BYTES} bytes")
+        val payloadBytes = payload.toByteArray(Charsets.UTF_8).size
+        if (payload.isEmpty() || payloadBytes > MAX_REPORT_BYTES) {
+            return denied("report is empty or exceeds byte limit")
         }
-        val declaredTarget = extras?.getString("targetPackage").orEmpty()
+
+        val declaredTarget = extras?.getString(KEY_TARGET_PACKAGE).orEmpty()
         if (!isTargetUid(caller, declaredTarget)) {
-            Log.w(TAG, "publish rejected for uid $caller")
+            Log.w(TAG, "publish rejected for unauthorized caller")
             return denied("caller is not the configured target package")
         }
+
+        val validSchema = runCatching {
+            val root = JSONObject(payload)
+            root.optInt("schemaVersion", -1) == SCHEMA_VERSION &&
+                root.optString("targetPackage") == declaredTarget
+        }.getOrDefault(false)
+        if (!validSchema) return denied("invalid report schema or target package")
+
         synchronized(lock) {
             latestReport = payload
             publishedAt = System.currentTimeMillis()
@@ -84,13 +88,11 @@ class ObservationProvider : ContentProvider() {
     private fun ownUid(): Int = context?.applicationInfo?.uid ?: -1
 
     /**
-     * Accept only when the caller UID really owns the configured target package,
-     * and only when the payload claims the same package. A spoofed
-     * `targetPackage` string alone never authorizes a write.
+     * A caller-supplied package string is never sufficient authorization:
+     * PackageManager must independently confirm ownership of the target UID.
      */
     private fun isTargetUid(callerUid: Int, declaredTarget: String): Boolean {
-        if (callerUid <= 0) return false
-        if (declaredTarget != TARGET_PACKAGE) return false
+        if (callerUid <= 0 || declaredTarget != TARGET_PACKAGE) return false
         val packages = context?.packageManager?.getPackagesForUid(callerUid) ?: return false
         return packages.any { it == TARGET_PACKAGE }
     }
@@ -120,6 +122,7 @@ class ObservationProvider : ContentProvider() {
         private const val TAG = "ObservationProvider"
         private const val TARGET_PACKAGE = "com.openai.chatgpt"
         private const val MAX_REPORT_BYTES = 64 * 1024
+        private const val SCHEMA_VERSION = 1
 
         const val METHOD_PUBLISH = "publish"
         const val METHOD_READ = "read"
@@ -130,15 +133,14 @@ class ObservationProvider : ContentProvider() {
         const val KEY_REASON = "reason"
         const val KEY_PUBLISHED_AT = "publishedAt"
         const val KEY_PUBLISH_COUNT = "publishCount"
+        const val KEY_TARGET_PACKAGE = "targetPackage"
 
         const val AUTHORITY = "app.gptdynamichook.observations"
 
         private val lock = Any()
 
         @Volatile private var latestReport: String? = null
-
         @Volatile private var publishedAt: Long = 0L
-
         @Volatile private var publishCount: Int = 0
 
         /** Same-process read used by the module UI (no Binder round trip). */
