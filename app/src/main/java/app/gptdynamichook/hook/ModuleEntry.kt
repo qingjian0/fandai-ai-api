@@ -40,7 +40,7 @@ class ModuleEntry : XposedModule() {
     private val preferenceListeners = ConcurrentHashMap<String, SharedPreferences.OnSharedPreferenceChangeListener>()
 
     override fun onModuleLoaded(param: ModuleLoadedParam) {
-        log(Log.INFO, TAG, "Loaded process=\${param.processName}, API=$apiVersion, framework=$frameworkName")
+        log(Log.INFO, TAG, "Loaded process=${param.processName}, API=$apiVersion, framework=$frameworkName")
     }
 
     override fun onPackageReady(param: PackageReadyParam) {
@@ -53,7 +53,7 @@ class ModuleEntry : XposedModule() {
         val preferences = runCatching {
             getRemotePreferences(ProfileStore.PREFERENCES_GROUP)
         }.getOrElse {
-            log(Log.WARN, TAG, "Remote preferences unavailable: \${it.javaClass.simpleName}")
+            log(Log.WARN, TAG, "Remote preferences unavailable: ${it.javaClass.simpleName}")
             return
         }
 
@@ -66,7 +66,7 @@ class ModuleEntry : XposedModule() {
                     )
                     applyProfiles(param.packageName, param.classLoader, profiles)
                 }.onFailure {
-                    log(Log.ERROR, TAG, "Profile refresh failed: \${it.javaClass.simpleName}")
+                    log(Log.ERROR, TAG, "Profile refresh failed: ${it.javaClass.simpleName}")
                 }
             }
         }
@@ -91,7 +91,7 @@ class ModuleEntry : XposedModule() {
             .filterValues { it.size > 1 }
             .keys
         if (duplicateIds.isNotEmpty()) {
-            log(Log.WARN, TAG, "Ignoring duplicate Profile IDs: \${duplicateIds.joinToString()}")
+            log(Log.WARN, TAG, "Ignoring duplicate Profile IDs: ${duplicateIds.joinToString()}")
         }
 
         val unambiguous = matching.filterNot { it.id in duplicateIds }
@@ -108,7 +108,7 @@ class ModuleEntry : XposedModule() {
                 if (result.isSuccess) {
                     installed.remove(entry.key, entry.value)
                 } else {
-                    log(Log.ERROR, TAG, "Failed to unhook stale profile: \${entry.key}")
+                    log(Log.ERROR, TAG, "Failed to unhook stale profile: ${entry.key}")
                 }
             }
 
@@ -123,7 +123,7 @@ class ModuleEntry : XposedModule() {
                 profile.parameterTypeNames
             )
             if (method == null) {
-                log(Log.WARN, TAG, "Profile \${profile.id}: exact method signature not found")
+                log(Log.WARN, TAG, "Profile ${profile.id}: exact method signature not found")
                 return@forEach
             }
             installPassThrough(key, profile, method)
@@ -160,9 +160,9 @@ class ModuleEntry : XposedModule() {
                 }
             val registration = InstalledHook(HookProfileSignature.of(profile), handle)
             installed.put(key, registration)?.handle?.unhook()
-            log(Log.INFO, TAG, "Installed validated pass-through profile \${profile.id}")
+            log(Log.INFO, TAG, "Installed validated pass-through profile ${profile.id}")
         }.onFailure {
-            log(Log.ERROR, TAG, "Failed to install profile \${profile.id}: \${it.javaClass.simpleName}")
+            log(Log.ERROR, TAG, "Failed to install profile ${profile.id}: ${it.javaClass.simpleName}")
         }
     }
 
