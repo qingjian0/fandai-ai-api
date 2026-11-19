@@ -1,0 +1,12 @@
+[
+  {
+    "id": "chatgpt-1.2026.314-api-error-getter",
+    "targetPackage": "com.openai.chatgpt",
+    "className": "com.openai.network.ApiServiceError",
+    "methodName": "a",
+    "parameterTypeNames": [],
+    "enabled": false,
+    "targetVersionCode": 2631432,
+    "targetSignerSha256": "13e17c5dd7ee6be96f56625dce30f7bad62082b9a4834aa2a7ef3f9bfa9d9fff"
+  }
+]
