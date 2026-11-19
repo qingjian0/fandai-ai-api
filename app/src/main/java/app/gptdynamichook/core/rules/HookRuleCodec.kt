@@ -14,11 +14,12 @@ object HookRuleCodec {
     fun decode(raw: String?): List<HookRule> {
         if (raw.isNullOrBlank() || raw.length > MAX_ENCODED_LENGTH) return emptyList()
         return runCatching {
-            val root = JSONObject(raw)
-            val array = when {
-                root.has("rules") -> root.getJSONArray("rules")
-                raw.trimStart().startsWith("[") -> JSONArray(raw)
-                else -> JSONArray()
+            val trimmed = raw.trimStart()
+            // A bare array is a valid rule file; JSONObject(trimmed) would throw on it.
+            val array = if (trimmed.startsWith("[")) {
+                JSONArray(trimmed)
+            } else {
+                JSONObject(trimmed).optJSONArray("rules") ?: JSONArray()
             }
             require(array.length() <= MAX_RULES) { "too_many_rules" }
             buildList {
