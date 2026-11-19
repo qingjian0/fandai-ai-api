@@ -27,6 +27,8 @@ class MainActivity : Activity(), App.ServiceStateListener {
     private lateinit var classInput: EditText
     private lateinit var methodInput: EditText
     private lateinit var parametersInput: EditText
+    private lateinit var versionInput: EditText
+    private lateinit var signerInput: EditText
     private lateinit var enabledInput: CheckBox
     private lateinit var profilesContainer: LinearLayout
     private lateinit var reportView: TextView
@@ -86,6 +88,9 @@ class MainActivity : Activity(), App.ServiceStateListener {
         classInput = field(content, "目标类名", "com.example.Target")
         methodInput = field(content, "目标方法名", "send")
         parametersInput = field(content, "参数类型（逗号分隔；无参数留空）", "java.lang.String")
+
+        versionInput = field(content, "目标版本码（可留空 = 不约束）", "")
+        signerInput = field(content, "目标签名 SHA-256（64 位小写 hex，留空 = 不约束）", "")
 
         enabledInput = CheckBox(this).apply {
             text = "启用此 Profile（默认关闭）"
@@ -181,13 +186,20 @@ class MainActivity : Activity(), App.ServiceStateListener {
             .split(',')
             .map(String::trim)
             .filter(String::isNotEmpty)
+        val rawVersion = versionInput.text.toString().trim()
+        if (rawVersion.isNotEmpty() && rawVersion.toLongOrNull() == null) {
+            toast("目标版本码必须是整数")
+            return
+        }
         val profile = HookProfile(
             id = editingProfileId ?: "profile-${UUID.randomUUID()}",
             targetPackage = packageInput.text.toString().trim(),
             className = classInput.text.toString().trim(),
             methodName = methodInput.text.toString().trim(),
             parameterTypeNames = parameters,
-            enabled = enabledInput.isChecked
+            enabled = enabledInput.isChecked,
+            targetVersionCode = versionInput.text.toString().trim().toLongOrNull(),
+            targetSignerSha256 = signerInput.text.toString().trim().lowercase().ifBlank { null }
         )
         val errors = HookProfileValidator.validate(profile)
         if (errors.isNotEmpty()) {
@@ -325,6 +337,8 @@ class MainActivity : Activity(), App.ServiceStateListener {
         classInput.setText(profile.className)
         methodInput.setText(profile.methodName)
         parametersInput.setText(profile.parameterTypeNames.joinToString(","))
+        versionInput.setText(profile.targetVersionCode?.toString() ?: "")
+        signerInput.setText(profile.targetSignerSha256 ?: "")
         enabledInput.isChecked = profile.enabled
         toast("正在编辑 ${profile.id}")
     }
@@ -335,6 +349,8 @@ class MainActivity : Activity(), App.ServiceStateListener {
         classInput.setText("com.example.Target")
         methodInput.setText("send")
         parametersInput.setText("java.lang.String")
+        versionInput.setText("")
+        signerInput.setText("")
         enabledInput.isChecked = false
     }
 
