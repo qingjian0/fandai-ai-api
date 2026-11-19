@@ -18,7 +18,8 @@ class HookEventCollector(
         val signature: String,
         val elapsedMs: Long,
         val outcome: String,
-        val result: HookResultParser.HookResult?
+        val result: HookResultParser.HookResult?,
+        val arguments: HookResultParser.HookResult?
     )
 
     private val lock = Any()
@@ -31,7 +32,8 @@ class HookEventCollector(
         profile: HookProfile,
         elapsedMs: Long,
         outcome: String,
-        result: HookResultParser.HookResult?
+        result: HookResultParser.HookResult?,
+        arguments: HookResultParser.HookResult? = null
     ) {
         synchronized(lock) {
             val event = Event(
@@ -40,7 +42,8 @@ class HookEventCollector(
                 signature = HookProfileSignature.of(profile),
                 elapsedMs = elapsedMs.coerceAtLeast(0L),
                 outcome = outcome.take(MAX_OUTCOME_LENGTH),
-                result = result
+                result = result,
+                arguments = arguments
             )
             if (buffer.size >= capacity) buffer.removeFirst()
             buffer.addLast(event)
