@@ -4,6 +4,7 @@ import android.content.SharedPreferences
 import android.util.Log
 import app.gptdynamichook.core.codec.HookProfileCodec
 import app.gptdynamichook.core.model.HookProfile
+import app.gptdynamichook.core.model.HookProfileSignature
 import app.gptdynamichook.core.resolve.ExecutableResolver
 import app.gptdynamichook.core.store.ProfileStore
 import app.gptdynamichook.core.validation.HookProfileValidator
@@ -80,7 +81,7 @@ class ModuleEntry : XposedModule() {
         installed.entries
             .filter { (key, registration) ->
                 key.startsWith("$packageName:") &&
-                    desired[key]?.let(::signatureOf) != registration.signature
+                    desired[key]?.let(HookProfileSignature::of) != registration.signature
             }
             .forEach { entry ->
                 if (installed.remove(entry.key, entry.value)) entry.value.handle.unhook()
@@ -110,17 +111,13 @@ class ModuleEntry : XposedModule() {
                 .setId(key)
                 .setExceptionMode(XposedInterface.ExceptionMode.PROTECTIVE)
                 .intercept { chain -> chain.proceed() }
-            val registration = InstalledHook(signatureOf(profile), handle)
+            val registration = InstalledHook(HookProfileSignature.of(profile), handle)
             installed.put(key, registration)?.handle?.unhook()
             log(Log.INFO, TAG, "Installed validated pass-through profile ${profile.id}")
         }.onFailure {
             log(Log.ERROR, TAG, "Failed to install profile ${profile.id}: ${it.javaClass.simpleName}")
         }
     }
-
-    private fun signatureOf(profile: HookProfile): String =
-        listOf(profile.className, profile.methodName, profile.parameterTypeNames.joinToString(","))
-            .joinToString("#")
 
     private fun hookKey(packageName: String, profileId: String) = "$packageName:$profileId"
 
