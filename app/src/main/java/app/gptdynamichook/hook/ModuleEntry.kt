@@ -5,6 +5,9 @@ import android.util.Log
 import app.gptdynamichook.core.codec.HookProfileCodec
 import app.gptdynamichook.core.model.HookProfile
 import app.gptdynamichook.core.model.HookProfileSignature
+import app.gptdynamichook.core.report.HookEventCollector
+import app.gptdynamichook.core.report.HookReportCodec
+import app.gptdynamichook.core.report.HookResultParser
 import app.gptdynamichook.core.resolve.ExecutableResolver
 import app.gptdynamichook.core.store.ProfileCollection
 import app.gptdynamichook.core.store.ProfileStore
@@ -15,6 +18,9 @@ import io.github.libxposed.api.XposedModuleInterface.ModuleLoadedParam
 import io.github.libxposed.api.XposedModuleInterface.PackageReadyParam
 import java.lang.reflect.Method
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * Dynamic hook entry. It installs pass-through interceptors only for explicitly
@@ -26,7 +32,13 @@ class ModuleEntry : XposedModule() {
         val handle: XposedInterface.HookHandle
     )
 
+    private val collector = HookEventCollector()
+    private val publishQueued = AtomicBoolean(false)
+    private val publisher = Executors.newSingleThreadScheduledExecutor { runnable ->
+        Thread(runnable, "gpt-hook-report").apply { isDaemon = true }
+    }
     private val installed = ConcurrentHashMap<String, InstalledHook>()
+    @Volatile private var targetPackage: String = ""
     private val packageLocks = ConcurrentHashMap<String, Any>()
     private val preferenceListeners = ConcurrentHashMap<String, SharedPreferences.OnSharedPreferenceChangeListener>()
 
@@ -35,6 +47,7 @@ class ModuleEntry : XposedModule() {
     }
 
     override fun onPackageReady(param: PackageReadyParam) {
+        targetPackage = param.packageName
         if (apiVersion < XposedInterface.API_102) {
             log(Log.WARN, TAG, "Runtime API $apiVersion is below required API 102")
             return
@@ -130,7 +143,29 @@ class ModuleEntry : XposedModule() {
             val handle = hook(method)
                 .setId(key)
                 .setExceptionMode(XposedInterface.ExceptionMode.PROTECTIVE)
-                .intercept { chain -> chain.proceed() }
+                .intercept { chain ->
+                    val started = System.nanoTime()
+                    try {
+                        val result = chain.proceed()
+                        collector.record(
+                            profile,
+                            (System.nanoTime() - started) / 1_000_000L,
+                            "ok",
+                            HookResultParser.parseKeyOnly(describe(result))
+                        )
+                        schedulePublish()
+                        result
+                    } catch (t: Throwable) {
+                        collector.record(
+                            profile,
+                            (System.nanoTime() - started) / 1_000_000L,
+                            "throw:" + t.javaClass.simpleName.take(64),
+                            null
+                        )
+                        schedulePublish()
+                        throw t
+                    }
+                }
             val registration = InstalledHook(HookProfileSignature.of(profile), handle)
             installed.put(key, registration)?.handle?.unhook()
             log(Log.INFO, TAG, "Installed validated pass-through profile ${profile.id}")
@@ -139,9 +174,31 @@ class ModuleEntry : XposedModule() {
         }
     }
 
+    /** Key-only stringification: bean keys are captured, all values are dropped here. */
+    private fun describe(value: Any?): String? = when (value) {
+        null -> null
+        is String -> null
+        is ByteArray -> "bytes=" + value.size
+        else -> runCatching { value.toString() }.getOrNull()
+    }
+
+    private fun schedulePublish() {
+        if (!publishQueued.compareAndSet(false, true)) return
+        runCatching {
+            publisher.schedule({
+                publishQueued.set(false)
+                if (collector.isEmpty()) return@schedule
+                val snapshot = collector.drain()
+                val json = HookReportCodec.encode(snapshot, targetPackage)
+                log(Log.INFO, TAG, "observation-report: " + json)
+            }, REPORT_DEBOUNCE_MS, TimeUnit.MILLISECONDS)
+        }.onFailure { publishQueued.set(false) }
+    }
+
     private fun hookKey(packageName: String, profileId: String) = "$packageName:$profileId"
 
     private companion object {
         const val TAG = "GPTDynamicHook"
+        const val REPORT_DEBOUNCE_MS = 2000L
     }
 }
