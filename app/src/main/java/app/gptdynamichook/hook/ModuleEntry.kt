@@ -36,7 +36,6 @@ class ModuleEntry : XposedModule() {
         Thread(runnable, "gpt-hook-report").apply { isDaemon = true }
     }
     private val installed = ConcurrentHashMap<String, InstalledHook>()
-    @Volatile private var targetPackage: String = ""
     private val packageLocks = ConcurrentHashMap<String, Any>()
     private val preferenceListeners = ConcurrentHashMap<String, SharedPreferences.OnSharedPreferenceChangeListener>()
 
@@ -45,7 +44,6 @@ class ModuleEntry : XposedModule() {
     }
 
     override fun onPackageReady(param: PackageReadyParam) {
-        targetPackage = param.packageName
         if (apiVersion < XposedInterface.API_102) {
             log(Log.WARN, TAG, "Runtime API $apiVersion is below required API 102")
             return
@@ -138,11 +136,16 @@ class ModuleEntry : XposedModule() {
                 log(Log.WARN, TAG, "Profile ${profile.id}: exact method signature not found")
                 return@forEach
             }
-            installPassThrough(key, profile, method)
+            installPassThrough(key, packageName, profile, method)
         }
     }
 
-    private fun installPassThrough(key: String, profile: HookProfile, method: Method) {
+    private fun installPassThrough(
+        key: String,
+        packageName: String,
+        profile: HookProfile,
+        method: Method
+    ) {
         runCatching {
             val handle = hook(method)
                 .setId(key)
@@ -157,7 +160,7 @@ class ModuleEntry : XposedModule() {
                             "ok",
                             HookResultParser.parseObject(result)
                         )
-                        schedulePublish()
+                        schedulePublish(packageName)
                         result
                     } catch (t: Throwable) {
                         collector.record(
@@ -166,7 +169,7 @@ class ModuleEntry : XposedModule() {
                             "throw:" + t.javaClass.simpleName.take(64),
                             null
                         )
-                        schedulePublish()
+                        schedulePublish(packageName)
                         throw t
                     }
                 }
@@ -178,16 +181,32 @@ class ModuleEntry : XposedModule() {
         }
     }
 
-    private fun schedulePublish() {
+    /**
+     * Takes a non-destructive snapshot, encodes it once, writes it to logcat and
+     * offers it to the module app. The snapshot is acknowledged only after the
+     * report has actually been produced, so a failing encode or relay keeps the
+     * events queued for the next attempt instead of losing them.
+     */
+    private fun schedulePublish(packageName: String) {
         if (!publishQueued.compareAndSet(false, true)) return
         runCatching {
             publisher.schedule({
                 publishQueued.set(false)
                 if (collector.isEmpty()) return@schedule
-                val snapshot = collector.drain()
-                val json = HookReportCodec.encode(snapshot, targetPackage)
+                val snapshot = collector.snapshot()
+                val json = runCatching {
+                    HookReportCodec.encode(snapshot, packageName)
+                }.getOrElse {
+                    log(Log.WARN, TAG, "report encode failed: ${it.javaClass.simpleName}")
+                    return@schedule
+                }
+                // logcat is the primary channel; the provider relay is best effort.
                 log(Log.INFO, TAG, "observation-report: " + json)
-                ReportRelay.publish(json)
+                val relayed = ReportRelay.publish(json)
+                collector.acknowledge(snapshot)
+                if (!relayed) {
+                    log(Log.WARN, TAG, "report kept in logcat only; relay not acknowledged")
+                }
             }, REPORT_DEBOUNCE_MS, TimeUnit.MILLISECONDS)
         }.onFailure { publishQueued.set(false) }
     }
