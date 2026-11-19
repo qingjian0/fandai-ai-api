@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">GPT Dynamic Hook</string>
+    <string name="module_description">基于现代 libxposed API 的动态 Hook 模块</string>
+</resources>

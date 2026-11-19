@@ -2,13 +2,16 @@ name: Android build
 
 on:
   push:
-    branches: [main]
+    branches: [main, dev]
   pull_request:
-    branches: [main]
+    branches: [main, dev]
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
-  debug-apk:
+  verify:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -17,13 +20,17 @@ jobs:
           distribution: temurin
           java-version: "17"
       - uses: android-actions/setup-android@v3
+        with:
+          packages: "platform-tools platforms;android-35 build-tools;35.0.0"
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: "8.9"
-      - name: Build debug APK
+      - name: Assemble debug APK
         run: gradle assembleDebug
+      - name: Run unit tests
+        run: gradle testDebugUnitTest
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: fandai-ai-api-debug
+          name: GPT-Dynamic-Hook-debug
           path: app/build/outputs/apk/debug/*.apk
