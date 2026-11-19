@@ -9,6 +9,7 @@ import app.gptdynamichook.core.report.HookEventCollector
 import app.gptdynamichook.core.report.HookReportCodec
 import app.gptdynamichook.core.report.HookResultParser
 import app.gptdynamichook.core.resolve.ExecutableResolver
+import app.gptdynamichook.core.rules.HookRule
 import app.gptdynamichook.core.store.ProfileCollection
 import app.gptdynamichook.core.store.ProfileStore
 import app.gptdynamichook.core.validation.HookProfileValidator
@@ -39,6 +40,8 @@ class ModuleEntry : XposedModule() {
     }
     private val installed = ConcurrentHashMap<String, InstalledHook>()
     private val packageLocks = ConcurrentHashMap<String, Any>()
+    @Volatile private var ruleEngine: RuleEngine? = null
+    @Volatile private var ruleWatcher: RuleWatcher? = null
     private val preferenceListeners = ConcurrentHashMap<String, SharedPreferences.OnSharedPreferenceChangeListener>()
 
     override fun onModuleLoaded(param: ModuleLoadedParam) {
@@ -78,6 +81,39 @@ class ModuleEntry : XposedModule() {
                 if (key == ProfileStore.PROFILES_KEY) apply()
             }.also(preferences::registerOnSharedPreferenceChangeListener)
         }
+
+        startRuleWatch(param.packageName, param.classLoader)
+    }
+
+    /**
+     * Starts the sweep loop: an on-disk rule file is re-read every couple of
+     * seconds and applied without restarting the target process. Rules may match
+     * many classes by regex and capture stack traces, which is what allows an
+     * operator to widen, read, and narrow iteratively.
+     */
+    private fun startRuleWatch(packageName: String, classLoader: ClassLoader) {
+        if (ruleWatcher != null) return
+        val rulesFile = RuleWatcher.rulesFileFor(packageName)
+        val reportFile = RuleWatcher.reportFileFor(packageName)
+        val engine = RuleEngine(this, reportFile) { line -> log(Log.INFO, TAG, line) }
+        ruleEngine = engine
+        val watcher = RuleWatcher(
+            packageName = packageName,
+            rulesFile = rulesFile,
+            reportFile = reportFile,
+            classLoader = classLoader,
+            log = { line -> log(Log.INFO, TAG, line) },
+            apply = { rules: List<HookRule> ->
+                val lock = packageLocks.computeIfAbsent(packageName) { Any() }
+                synchronized(lock) {
+                    runCatching { engine.apply(packageName, classLoader, rules) }
+                        .onFailure { log(Log.ERROR, TAG, "rule apply failed: ${it.javaClass.simpleName}") }
+                }
+            }
+        )
+        watcher.start()
+        ruleWatcher = watcher
+        log(Log.INFO, TAG, "rule watcher started; file=$rulesFile")
     }
 
     private fun applyProfiles(
