@@ -1,5 +1,6 @@
 package app.gptdynamichook.hook
 
+import android.content.SharedPreferences
 import android.util.Log
 import app.gptdynamichook.core.codec.HookProfileCodec
 import app.gptdynamichook.core.model.HookProfile
@@ -19,14 +20,13 @@ import java.util.concurrent.ConcurrentHashMap
  */
 class ModuleEntry : XposedModule() {
     private val installed = ConcurrentHashMap<String, XposedInterface.HookHandle>()
-    private var preferencesListener: android.content.SharedPreferences.OnSharedPreferenceChangeListener? = null
+    private val preferenceListeners = ConcurrentHashMap<String, SharedPreferences.OnSharedPreferenceChangeListener>()
 
     override fun onModuleLoaded(param: ModuleLoadedParam) {
         log(Log.INFO, TAG, "Loaded process=${param.processName}, API=$apiVersion, framework=$frameworkName")
     }
 
     override fun onPackageReady(param: PackageReadyParam) {
-        if (param.packageName == packageName) return
         if (apiVersion < XposedInterface.API_102) {
             log(Log.WARN, TAG, "Runtime API $apiVersion is below required API 102")
             return
@@ -47,12 +47,10 @@ class ModuleEntry : XposedModule() {
         }
 
         apply()
-        if (preferencesListener == null) {
-            val listener = android.content.SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
+        preferenceListeners.computeIfAbsent(param.packageName) {
+            SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
                 if (key == ProfileStore.PROFILES_KEY) apply()
-            }
-            preferencesListener = listener
-            preferences.registerOnSharedPreferenceChangeListener(listener)
+            }.also(preferences::registerOnSharedPreferenceChangeListener)
         }
     }
 
@@ -64,10 +62,10 @@ class ModuleEntry : XposedModule() {
         val active = profiles.filter {
             HookProfileValidator.matchesTarget(it, packageName)
         }
-        val activeIds = active.map { it.id }.toSet()
+        val activeKeys = active.map { hookKey(packageName, it.id) }.toSet()
 
-        installed.keys.filterNot(activeIds::contains).forEach { id ->
-            installed.remove(id)?.unhook()
+        installed.keys.filterNot(activeKeys::contains).forEach { key ->
+            installed.remove(key)?.unhook()
         }
 
         active.forEach { profile ->
@@ -81,23 +79,26 @@ class ModuleEntry : XposedModule() {
                 log(Log.WARN, TAG, "Profile ${profile.id}: exact method signature not found")
                 return@forEach
             }
-            installPassThrough(profile, method)
+            installPassThrough(packageName, profile, method)
         }
     }
 
-    private fun installPassThrough(profile: HookProfile, method: Method) {
-        if (installed.containsKey(profile.id)) return
+    private fun installPassThrough(packageName: String, profile: HookProfile, method: Method) {
+        val key = hookKey(packageName, profile.id)
+        if (installed.containsKey(key)) return
         runCatching {
             val handle = hook(method)
                 .setId(profile.id)
                 .setExceptionMode(XposedInterface.ExceptionMode.PROTECTIVE)
                 .intercept { chain -> chain.proceed() }
-            installed.put(profile.id, handle)?.unhook()
+            installed.put(key, handle)?.unhook()
             log(Log.INFO, TAG, "Installed validated pass-through profile ${profile.id}")
         }.onFailure {
             log(Log.ERROR, TAG, "Failed to install profile ${profile.id}: ${it.javaClass.simpleName}")
         }
     }
+
+    private fun hookKey(packageName: String, profileId: String) = "$packageName:$profileId"
 
     private companion object {
         const val TAG = "GPTDynamicHook"

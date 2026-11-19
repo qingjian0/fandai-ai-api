@@ -15,7 +15,7 @@ import app.gptdynamichook.core.store.ProfileStore
 import app.gptdynamichook.core.validation.HookProfileValidator
 import io.github.libxposed.service.XposedService
 
-class MainActivity : Activity() {
+class MainActivity : Activity(), App.ServiceStateListener {
     private lateinit var status: TextView
     private lateinit var packageInput: EditText
     private lateinit var classInput: EditText
@@ -23,16 +23,32 @@ class MainActivity : Activity() {
     private lateinit var parametersInput: EditText
     private lateinit var enabledInput: CheckBox
     private var service: XposedService? = null
+    private val app get() = application as App
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         buildScreen()
-        bindService((application as App).xposedService)
     }
 
-    override fun onResume() {
-        super.onResume()
-        bindService((application as App).xposedService)
+    override fun onStart() {
+        super.onStart()
+        app.addServiceStateListener(this)
+    }
+
+    override fun onStop() {
+        app.removeServiceStateListener(this)
+        super.onStop()
+    }
+
+    override fun onServiceStateChanged(service: XposedService?) {
+        this.service = service
+        runOnUiThread {
+            status.text = if (service == null) {
+                "LSPosed 服务未连接。请确认已安装兼容的 LSPosed/libxposed 框架并启用本模块。"
+            } else {
+                "已连接：${service.frameworkName} ${service.frameworkVersion} / API ${service.apiVersion}\n当前作用域：${service.scope.joinToString()}"
+            }
+        }
     }
 
     private fun buildScreen() {
@@ -83,15 +99,6 @@ class MainActivity : Activity() {
         }
         parent.addView(input)
         return input
-    }
-
-    private fun bindService(current: XposedService?) {
-        service = current
-        status.text = if (current == null) {
-            "LSPosed 服务未连接。请确认已安装兼容的 LSPosed/libxposed 框架并启用本模块。"
-        } else {
-            "已连接：${current.frameworkName} ${current.frameworkVersion} / API ${current.apiVersion}\n当前作用域：${current.scope.joinToString()}"
-        }
     }
 
     private fun saveProfile() {

@@ -3,11 +3,27 @@ package app.gptdynamichook
 import android.app.Application
 import io.github.libxposed.service.XposedService
 import io.github.libxposed.service.XposedServiceHelper
+import java.util.concurrent.CopyOnWriteArraySet
 
 class App : Application(), XposedServiceHelper.OnServiceListener {
     @Volatile
     var xposedService: XposedService? = null
         private set
+
+    private val listeners = CopyOnWriteArraySet<ServiceStateListener>()
+
+    interface ServiceStateListener {
+        fun onServiceStateChanged(service: XposedService?)
+    }
+
+    fun addServiceStateListener(listener: ServiceStateListener) {
+        listeners.add(listener)
+        listener.onServiceStateChanged(xposedService)
+    }
+
+    fun removeServiceStateListener(listener: ServiceStateListener) {
+        listeners.remove(listener)
+    }
 
     override fun onCreate() {
         super.onCreate()
@@ -16,9 +32,17 @@ class App : Application(), XposedServiceHelper.OnServiceListener {
 
     override fun onServiceBind(service: XposedService) {
         xposedService = service
+        notifyListeners(service)
     }
 
     override fun onServiceDied(service: XposedService) {
-        if (xposedService === service) xposedService = null
+        if (xposedService === service) {
+            xposedService = null
+            notifyListeners(null)
+        }
+    }
+
+    private fun notifyListeners(service: XposedService?) {
+        listeners.forEach { it.onServiceStateChanged(service) }
     }
 }
