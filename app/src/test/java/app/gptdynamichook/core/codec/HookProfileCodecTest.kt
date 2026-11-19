@@ -49,6 +49,16 @@ class HookProfileCodecTest {
     }
 
     @Test
+    fun decodesLegacyProfilesWithoutPinningFields() {
+        val legacy = """[{"id":"legacy","targetPackage":"com.openai.chatgpt","className":"com.example.Client","methodName":"send","parameterTypeNames":["java.lang.String"],"enabled":true}]"""
+        val decoded = HookProfileCodec.decode(legacy)
+        assertEquals(1, decoded.size)
+        assertEquals(null, decoded.single().targetVersionCode)
+        assertEquals(null, decoded.single().targetSignerSha256)
+        assertEquals("legacy", decoded.single().id)
+    }
+
+    @Test
     fun roundTripsOptionalPinningFields() {
         val pinned = HookProfile(
             id = "pinned",
