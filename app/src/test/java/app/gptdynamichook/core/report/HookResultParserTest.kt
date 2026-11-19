@@ -61,6 +61,27 @@ class HookResultParserTest {
         assertNull(result.shape)
     }
 
+
+    @Test
+    fun argumentsExposeOnlyRuntimeTypesAndCount() {
+        val secret = ExplosiveToString()
+        val result = HookResultParser.parseArguments(listOf("Bearer SECRET", 42, null, secret))
+        assertEquals("arguments", result.shape)
+        assertEquals(4L, result.elementCount)
+        assertEquals(
+            listOf("java.lang.String", "java.lang.Integer", "null", ExplosiveToString::class.java.name),
+            result.argumentTypes
+        )
+        assertTrue(!result.toString().contains("SECRET"))
+    }
+
+    @Test
+    fun argumentTypeListIsBounded() {
+        val result = HookResultParser.parseArguments((0..40).toList())
+        assertEquals(41L, result.elementCount)
+        assertEquals(16, result.argumentTypes.size)
+    }
+
     private class ExplosiveToString {
         override fun toString(): String = error("must not be called")
     }
