@@ -20,7 +20,7 @@ object HookProfileValidator {
         if (!memberPattern.matches(profile.methodName)) add("invalid_method_name")
         if (profile.parameterTypeNames.size > 32) add("too_many_parameters")
         if (profile.parameterTypeNames.any {
-                it.isBlank() || it.length > 240 || !parameterTypePattern.matches(it)
+                it.isBlank() || it.length > 240 || it == "void" || it.startsWith("void[") ||\n                    !parameterTypePattern.matches(it)
             }) {
             add("invalid_parameter_type")
         }
