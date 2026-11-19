@@ -6,6 +6,7 @@ import app.gptdynamichook.core.codec.HookProfileCodec
 import app.gptdynamichook.core.model.HookProfile
 import app.gptdynamichook.core.model.HookProfileSignature
 import app.gptdynamichook.core.resolve.ExecutableResolver
+import app.gptdynamichook.core.store.ProfileCollection
 import app.gptdynamichook.core.store.ProfileStore
 import app.gptdynamichook.core.validation.HookProfileValidator
 import io.github.libxposed.api.XposedInterface
@@ -74,7 +75,11 @@ class ModuleEntry : XposedModule() {
         if (duplicateIds.isNotEmpty()) {
             log(Log.WARN, TAG, "Ignoring duplicate Profile IDs: ${duplicateIds.joinToString()}")
         }
-        val active = matching.filterNot { it.id in duplicateIds }
+
+        // Disabled, duplicated, deleted, or no-longer-matching profiles must not
+        // remain installed. This makes UI disable/delete changes take effect live.
+        val unambiguous = matching.filterNot { it.id in duplicateIds }
+        val active = ProfileCollection.enabledOnly(unambiguous)
         val desired = active.associateBy { hookKey(packageName, it.id) }
 
         // A reused ID must not preserve a hook when its target signature changes.
