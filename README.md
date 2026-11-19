@@ -20,16 +20,24 @@
 - Profile 集合按稳定 ID 执行 upsert、删除和启停，具备纯 JVM 单元测试。
 - UI 支持 Profile 列表、新建、编辑、删除、启用/禁用。
 - Profile 远程读写在单线程后台队列执行，避免阻塞主线程并保持 UI 写入顺序。
-- 仅对显式启用且完全匹配的 Profile 安装 pass-through Hook。
+- 仅对显式启用且完全匹配的 Profile 安装 Hook。
+- 每次命中记录 key-only 元数据（shape、header 名、字节长度、耗时、异常类名），2000ms 去抖后输出 `observation-report:` 到 logcat。
+- 采集缓冲区固定容量、报告上限 32KB，值/凭据/正文一律不进缓冲区。
 
 ## 当前限制
 
-- pass-through Hook 仅验证动态安装链路，不修改请求，也不代理网络。
+- Hook 回调当前为观察模式（proceed 透传），不修改请求，也不代理网络。
 - GPT 请求拦截、SSE、DSH Gateway/Agent/插件适配尚未实现。
 - 需要在真实 LSPosed 环境中验证 Remote Preferences、Hook 生命周期及不同 Android/客户端版本。
 - 目前尚无目标客户端的真实类名/方法签名 Profile；示例表单默认配置不启用。
 
-## 构建
+## 观察管线
+
+```
+hook 回调 → HookResultParser(仅键) → HookEventCollector(64 条环形) → HookReportCodec(≤32KB) → logcat observation-report
+```
+
+`adb logcat -s GPTDynamicHook | grep observation-report` 取回 JSON，人工/AI 分析后再回到 UI 调整 Profile。
 
 需要 JDK 17、Android SDK 37 Preview 和 Gradle 9.3.1。当前 CI 使用 Android 17 Preview 平台：
 
