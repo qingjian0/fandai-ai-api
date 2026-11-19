@@ -1,5 +1,7 @@
 package app.gptdynamichook.core.report
 
+import java.lang.reflect.Method
+
 /**
  * Builds a shape-only snapshot of a value.
  *
@@ -70,6 +72,9 @@ object ResultShape {
                     append('>')
                 }
             }
+            is Class<*> -> append("Class(").append(value.name.substringAfterLast('.')).append(')')
+            is Method, is java.lang.reflect.Field, is java.lang.reflect.Constructor ->
+                append(value.javaClass.simpleName)
             else -> {
                 appendSimpleType(value)
                 if (depth < MAX_DEPTH) describeBean(value, depth)
@@ -91,9 +96,8 @@ object ResultShape {
         methods.forEachIndexed { index, method ->
             if (index > 0) append(',')
             append(clean(method.name))
-            append(':')
-            val result = runCatching { method.invoke(value) }.getOrNull()
-            describeInto(result, depth + 1)
+            val type = method.returnType
+            append(':').append(type.name.substringAfterLast('.'))
         }
         append('}')
     }
