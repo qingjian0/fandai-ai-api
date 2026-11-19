@@ -27,7 +27,7 @@ class HookProfileValidatorTest {
             targetPackage = "com.openai.chatgpt",
             className = "com.example.Client",
             methodName = "execute",
-            parameterTypeNames = listOf("int[]", "java.lang.String[][]", "com.example.Outer$Inner")
+            parameterTypeNames = listOf("int[]", "java.lang.String[][]", "com.example.Outer\\$Inner")
         )
         assertTrue(HookProfileValidator.validate(profile).isEmpty())
     }
