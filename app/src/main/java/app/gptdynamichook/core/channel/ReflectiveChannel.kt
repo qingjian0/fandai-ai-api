@@ -99,6 +99,13 @@ object ReflectiveChannel {
 
         return when (value) {
             is String -> if (emitValues) value.take(MAX_STRING) else "String(len=${value.length})"
+            // ByteArray is the body of every ktor response; without this branch a
+            // captured payload is indistinguishable from an empty one.
+            is ByteArray -> if (emitValues) {
+                "ByteArray(" + value.size + ")" + String(value, Charsets.UTF_8).take(MAX_STRING)
+            } else {
+                "ByteArray(" + value.size + ")"
+            }
             is Number, is Boolean -> value
             is Char -> value.toString()
             is Class<*> -> value.name
