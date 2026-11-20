@@ -1,0 +1,66 @@
+package app.gptdynamichook.core.codec
+
+import app.gptdynamichook.core.model.HookProfile
+import org.json.JSONArray
+import org.json.JSONObject
+
+object HookProfileCodec {
+    fun encode(profiles: List<HookProfile>): String {
+        val array = JSONArray()
+        profiles.forEach { profile ->
+            array.put(
+                JSONObject()
+                    .put("id", profile.id)
+                    .put("targetPackage", profile.targetPackage)
+                    .put("className", profile.className)
+                    .put("methodName", profile.methodName)
+                    .put("parameterTypeNames", JSONArray(profile.parameterTypeNames))
+                    .put("enabled", profile.enabled)
+                    .put("targetVersionCode", profile.targetVersionCode ?: JSONObject.NULL)
+                    .put("targetSignerSha256", profile.targetSignerSha256 ?: JSONObject.NULL)
+            )
+        }
+        return array.toString()
+    }
+
+    fun decode(raw: String?): List<HookProfile> {
+        if (raw.isNullOrBlank() || raw.length > MAX_ENCODED_LENGTH) return emptyList()
+        return runCatching {
+            val array = JSONArray(raw)
+            require(array.length() <= MAX_PROFILES) { "too_many_profiles" }
+            buildList {
+                for (index in 0 until array.length()) {
+                    val item = array.getJSONObject(index)
+                    val params = item.optJSONArray("parameterTypeNames") ?: JSONArray()
+                    add(
+                        HookProfile(
+                            id = item.getString("id"),
+                            targetPackage = item.getString("targetPackage"),
+                            className = item.getString("className"),
+                            methodName = item.getString("methodName"),
+                            parameterTypeNames = buildList {
+                                for (parameterIndex in 0 until params.length()) {
+                                    add(params.getString(parameterIndex))
+                                }
+                            },
+                            enabled = item.optBoolean("enabled", false),
+                            targetVersionCode = if (item.isNull("targetVersionCode")) {
+                                null
+                            } else {
+                                item.optLong("targetVersionCode", 0L)
+                            },
+                            targetSignerSha256 = if (item.isNull("targetSignerSha256")) {
+                                null
+                            } else {
+                                item.optString("targetSignerSha256", "").ifBlank { null }
+                            }
+                        )
+                    )
+                }
+            }
+        }.getOrDefault(emptyList())
+    }
+
+    private const val MAX_PROFILES = 512
+    private const val MAX_ENCODED_LENGTH = 1_048_576
+}

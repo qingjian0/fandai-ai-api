@@ -1,30 +1,360 @@
 package app.gptdynamichook
 
 import android.app.Activity
+import android.app.AlertDialog
+import android.net.Uri
 import android.os.Bundle
-import android.view.Gravity
+import android.view.ViewGroup
+import android.widget.Button
+import android.widget.CheckBox
+import android.widget.EditText
 import android.widget.LinearLayout
+import android.widget.ScrollView
 import android.widget.TextView
+import android.widget.Toast
+import app.gptdynamichook.core.model.HookProfile
+import app.gptdynamichook.core.store.ProfileStore
+import app.gptdynamichook.core.validation.HookProfileValidator
+import io.github.libxposed.service.XposedService
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+import java.util.UUID
 
-class MainActivity : Activity() {
+class MainActivity : Activity(), App.ServiceStateListener {
+    private lateinit var status: TextView
+    private lateinit var packageInput: EditText
+    private lateinit var classInput: EditText
+    private lateinit var methodInput: EditText
+    private lateinit var parametersInput: EditText
+    private lateinit var versionInput: EditText
+    private lateinit var signerInput: EditText
+    private lateinit var enabledInput: CheckBox
+    private lateinit var profilesContainer: LinearLayout
+    private lateinit var reportView: TextView
+    private var service: XposedService? = null
+    private var editingProfileId: String? = null
+    private var profileLoadGeneration = 0
+    private val app get() = application as App
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        buildScreen()
+    }
 
-        val title = TextView(this).apply {
-            text = getString(R.string.app_name)
-            textSize = 24f
+    override fun onStart() {
+        super.onStart()
+        app.addServiceStateListener(this)
+        renderReport()
+    }
+
+    override fun onStop() {
+        app.removeServiceStateListener(this)
+        profileLoadGeneration++
+        super.onStop()
+    }
+
+    override fun onServiceStateChanged(service: XposedService?) {
+        runOnUiThread {
+            if (isFinishing || isDestroyed) return@runOnUiThread
+            this.service = service
+            status.text = if (service == null) {
+                "LSPosed 服务未连接。请确认已安装兼容的 LSPosed/libxposed 框架并启用本模块。"
+            } else {
+                "已连接：${service.frameworkName} ${service.frameworkVersion} / API ${service.apiVersion}\n当前作用域：${service.scope.joinToString()}"
+            }
+            reloadProfiles()
         }
-        val status = TextView(this).apply {
-            text = "独立 LSPosed 模块\n\n模块运行状态与客户端 Profile 管理将在后续阶段接入。\n当前版本不执行任何目标应用 Hook。"
-            textSize = 16f
-            setPadding(0, 24, 0, 0)
-        }
-        setContentView(LinearLayout(this).apply {
+    }
+
+    private fun buildScreen() {
+        val content = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(32, 32, 32, 32)
-            addView(title)
-            addView(status)
+            setPadding(28, 28, 28, 28)
+        }
+        val scroll = ScrollView(this).apply { addView(content) }
+
+        content.addView(TextView(this).apply {
+            text = getString(R.string.app_name)
+            textSize = 25f
         })
+        status = TextView(this).apply {
+            text = "正在检测 LSPosed 服务连接…"
+            textSize = 14f
+        }
+        content.addView(status)
+
+        packageInput = field(content, "目标包名", "com.openai.chatgpt")
+        classInput = field(content, "目标类名", "com.example.Target")
+        methodInput = field(content, "目标方法名", "send")
+        parametersInput = field(content, "参数类型（逗号分隔；无参数留空）", "java.lang.String")
+
+        versionInput = field(content, "目标版本码（可留空 = 不约束）", "")
+        signerInput = field(content, "目标签名 SHA-256（64 位小写 hex，留空 = 不约束）", "")
+
+        enabledInput = CheckBox(this).apply {
+            text = "启用此 Profile（默认关闭）"
+            isChecked = false
+        }
+        content.addView(enabledInput)
+
+        content.addView(Button(this).apply {
+            text = "保存 Profile"
+            setOnClickListener { saveProfile() }
+        })
+        content.addView(Button(this).apply {
+            text = "取消编辑 / 新建"
+            setOnClickListener { clearEditor() }
+        })
+        content.addView(TextView(this).apply {
+            text = "已保存的 Profiles"
+            textSize = 19f
+            setPadding(0, 24, 0, 8)
+        })
+        profilesContainer = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+        }
+        content.addView(profilesContainer)
+        content.addView(TextView(this).apply {
+            text = "安全说明：配置默认禁用；只有在 LSPosed 已授权的作用域内，且包名、类名、方法名和参数签名全部匹配时，才会安装透传 Hook。"
+            textSize = 13f
+            setPadding(0, 18, 0, 0)
+        })
+        content.addView(TextView(this).apply {
+            text = "观察报告"
+            textSize = 19f
+            setPadding(0, 32, 0, 8)
+        })
+        reportView = TextView(this).apply {
+            text = "尚无报告。启用 Profile 并触发目标方法后点“刷新观察报告”。"
+            textSize = 12f
+        }
+        content.addView(reportView)
+        content.addView(Button(this).apply {
+            text = "刷新观察报告"
+            setOnClickListener { renderReport() }
+        })
+        content.addView(Button(this).apply {
+            text = "清空观察报告"
+            setOnClickListener { clearReport() }
+        })
+        setContentView(scroll)
+    }
+
+    private fun renderReport() {
+        val snapshot = ObservationProvider.snapshot()
+        val report = snapshot.first
+        if (report.isNullOrBlank()) {
+            reportView.text = "尚无报告。目标进程尚未回传，或该进程未加载本模块。"
+            return
+        }
+        val stamp = if (snapshot.second > 0L) {
+            SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date(snapshot.second))
+        } else {
+            "-"
+        }
+        reportView.text = "收到 " + snapshot.third + " 次 · 最近 " + stamp + "\n\n" + report
+    }
+
+    private fun clearReport() {
+        runCatching {
+            val uri = Uri.parse("content://" + ObservationProvider.AUTHORITY + "/report")
+            contentResolver.call(uri, ObservationProvider.METHOD_CLEAR, null, null)
+        }
+        renderReport()
+        toast("观察报告已清空")
+    }
+
+    private fun field(parent: ViewGroup, hint: String, value: String): EditText {
+        val input = EditText(this).apply {
+            this.hint = hint
+            setText(value)
+            isSingleLine = true
+        }
+        parent.addView(input)
+        return input
+    }
+
+    private fun saveProfile() {
+        val activeService = service
+        if (activeService == null) {
+            toast("LSPosed 服务未连接，无法保存跨进程 Profile")
+            return
+        }
+
+        val parameters = parametersInput.text.toString()
+            .split(',')
+            .map(String::trim)
+            .filter(String::isNotEmpty)
+        val rawVersion = versionInput.text.toString().trim()
+        if (rawVersion.isNotEmpty() && rawVersion.toLongOrNull() == null) {
+            toast("目标版本码必须是整数")
+            return
+        }
+        val profile = HookProfile(
+            id = editingProfileId ?: "profile-${UUID.randomUUID()}",
+            targetPackage = packageInput.text.toString().trim(),
+            className = classInput.text.toString().trim(),
+            methodName = methodInput.text.toString().trim(),
+            parameterTypeNames = parameters,
+            enabled = enabledInput.isChecked,
+            targetVersionCode = versionInput.text.toString().trim().toLongOrNull(),
+            targetSignerSha256 = signerInput.text.toString().trim().lowercase().ifBlank { null }
+        )
+        val errors = HookProfileValidator.validate(profile)
+        if (errors.isNotEmpty()) {
+            toast("配置无效：${errors.joinToString()}")
+            return
+        }
+
+        app.executeProfileIo {
+            val result = runCatching { ProfileStore(activeService).save(profile) }
+            runOnUiThread {
+                if (isFinishing || isDestroyed) return@runOnUiThread
+                val saved = result.getOrDefault(false)
+                toast(if (saved) "Profile 已保存" else "保存失败，请检查框架远程配置能力")
+                if (saved) {
+                    clearEditor()
+                    reloadProfiles()
+                }
+            }
+        }
+    }
+
+    private fun reloadProfiles() {
+        val generation = ++profileLoadGeneration
+        profilesContainer.removeAllViews()
+        val activeService = service ?: run {
+            profilesContainer.addView(TextView(this).apply { text = "连接 LSPosed 后显示 Profile 列表" })
+            return
+        }
+        profilesContainer.addView(TextView(this).apply { text = "正在读取 Profile…" })
+
+        app.executeProfileIo {
+            val result = runCatching { ProfileStore(activeService).load() }
+            runOnUiThread {
+                if (isFinishing || isDestroyed || generation != profileLoadGeneration ||
+                    service !== activeService
+                ) return@runOnUiThread
+                val profiles = result.getOrElse {
+                    profilesContainer.removeAllViews()
+                    profilesContainer.addView(TextView(this).apply {
+                        text = "读取 Profile 失败：${it.javaClass.simpleName}"
+                    })
+                    return@runOnUiThread
+                }
+                renderProfiles(activeService, profiles)
+            }
+        }
+    }
+
+    private fun renderProfiles(activeService: XposedService, profiles: List<HookProfile>) {
+        profilesContainer.removeAllViews()
+        if (profiles.isEmpty()) {
+            profilesContainer.addView(TextView(this).apply { text = "暂无 Profile" })
+            return
+        }
+        profiles.forEach { profile ->
+            val item = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                setPadding(0, 12, 0, 12)
+            }
+            item.addView(TextView(this).apply {
+                text = "${profile.targetPackage}\n${profile.className}#${profile.methodName}(${profile.parameterTypeNames.joinToString()})\nID: ${profile.id}"
+                textSize = 13f
+            })
+            val enabledToggle = CheckBox(this).apply {
+                text = "启用"
+                isChecked = profile.enabled
+            }
+            var restoringToggle = false
+            enabledToggle.setOnCheckedChangeListener { button, checked ->
+                if (restoringToggle) return@setOnCheckedChangeListener
+                button.isEnabled = false
+                app.executeProfileIo {
+                    val result = runCatching {
+                        ProfileStore(activeService).setEnabled(profile.id, checked)
+                    }
+                    runOnUiThread {
+                        if (isFinishing || isDestroyed) return@runOnUiThread
+                        button.isEnabled = true
+                        if (!result.getOrDefault(false)) {
+                            restoringToggle = true
+                            button.isChecked = !checked
+                            restoringToggle = false
+                            toast("更新启用状态失败")
+                        }
+                    }
+                }
+            }
+            item.addView(enabledToggle)
+
+            val actions = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+            actions.addView(Button(this).apply {
+                text = "编辑"
+                setOnClickListener { editProfile(profile) }
+            })
+            actions.addView(Button(this).apply {
+                text = "删除"
+                setOnClickListener {
+                    AlertDialog.Builder(this@MainActivity)
+                        .setTitle("删除 Profile")
+                        .setMessage("确定删除 ${profile.id} 吗？此操作不可撤销。")
+                        .setNegativeButton("取消", null)
+                        .setPositiveButton("删除") { _, _ ->
+                            app.executeProfileIo {
+                                val result = runCatching {
+                                    ProfileStore(activeService).delete(profile.id)
+                                }
+                                runOnUiThread {
+                                    if (isFinishing || isDestroyed) return@runOnUiThread
+                                    val deleted = result.getOrDefault(false)
+                                    toast(if (deleted) "Profile 已删除" else "删除失败")
+                                    if (deleted) {
+                                        if (editingProfileId == profile.id) clearEditor()
+                                        reloadProfiles()
+                                    }
+                                }
+                            }
+                        }
+                        .show()
+                }
+            })
+            item.addView(actions)
+            profilesContainer.addView(item)
+            profilesContainer.addView(android.view.View(this).apply {
+                setBackgroundColor(0xFFE0E0E0.toInt())
+                layoutParams = LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, 1
+                )
+            })
+        }
+    }
+
+    private fun editProfile(profile: HookProfile) {
+        editingProfileId = profile.id
+        packageInput.setText(profile.targetPackage)
+        classInput.setText(profile.className)
+        methodInput.setText(profile.methodName)
+        parametersInput.setText(profile.parameterTypeNames.joinToString(","))
+        versionInput.setText(profile.targetVersionCode?.toString() ?: "")
+        signerInput.setText(profile.targetSignerSha256 ?: "")
+        enabledInput.isChecked = profile.enabled
+        toast("正在编辑 ${profile.id}")
+    }
+
+    private fun clearEditor() {
+        editingProfileId = null
+        packageInput.setText("com.openai.chatgpt")
+        classInput.setText("com.example.Target")
+        methodInput.setText("send")
+        parametersInput.setText("java.lang.String")
+        versionInput.setText("")
+        signerInput.setText("")
+        enabledInput.isChecked = false
+    }
+
+    private fun toast(message: String) {
+        Toast.makeText(this, message, Toast.LENGTH_LONG).show()
     }
 }

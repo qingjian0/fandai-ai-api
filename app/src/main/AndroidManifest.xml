@@ -1,6 +1,15 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- The module app must be able to resolve the target package UID, otherwise
+         getPackagesForUid() returns null under AppsFilter and every publish is
+         rejected as unauthorized. -->
+    <queries>
+        <package android:name="com.openai.chatgpt" />
+    </queries>
+
     <application
+        android:name=".App"
         android:allowBackup="false"
         android:label="@string/app_name"
         android:description="@string/module_description"
@@ -14,5 +23,13 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- Exported only because the target process has a different UID.
+             Every call() re-checks the Binder caller UID. -->
+        <provider
+            android:name=".ObservationProvider"
+            android:authorities="app.gptdynamichook.observations"
+            android:exported="true"
+            android:grantUriPermissions="false" />
     </application>
 </manifest>

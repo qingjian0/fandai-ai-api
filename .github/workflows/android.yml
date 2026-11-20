@@ -1,11 +1,13 @@
 name: Android build
 
 on:
-  push:
-    branches: [main, dev]
   pull_request:
     branches: [main, dev]
   workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
@@ -13,6 +15,7 @@ permissions:
 jobs:
   verify:
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
@@ -21,14 +24,53 @@ jobs:
           java-version: "17"
       - uses: android-actions/setup-android@v3
         with:
-          packages: "platform-tools platforms;android-35 build-tools;35.0.0"
+          packages: "platform-tools build-tools;36.0.0"
+      - name: Install Android 17 preview platform
+        run: |
+          yes | sdkmanager --install --channel=3 "platforms;android-37.0"
+          if [ -d "$ANDROID_HOME/platforms/android-37.0" ] && [ ! -e "$ANDROID_HOME/platforms/android-37" ]; then
+            ln -s android-37.0 "$ANDROID_HOME/platforms/android-37"
+          fi
       - uses: gradle/actions/setup-gradle@v4
         with:
-          gradle-version: "8.9"
+          gradle-version: "9.3.1"
       - name: Assemble debug APK
         run: gradle assembleDebug
       - name: Run unit tests
         run: gradle testDebugUnitTest
+      - name: Audit LSPosed module metadata
+        run: |
+          set -euo pipefail
+          META=app/src/main/resources/META-INF/xposed
+          test -f "$META/java_init.list" || { echo "missing java_init.list"; exit 1; }
+          test -f "$META/module.prop" || { echo "missing module.prop"; exit 1; }
+
+          # Every entry in java_init.list must resolve to a real Kotlin/Java source file.
+          while IFS= read -r entry; do
+            [ -z "$entry" ] && continue
+            path="app/src/main/java/$(echo "$entry" | tr '.' '/').kt"
+            alt="app/src/main/java/$(echo "$entry" | tr '.' '/').java"
+            if [ ! -f "$path" ] && [ ! -f "$alt" ]; then
+              echo "java_init.list entry has no source: $entry"
+              exit 1
+            fi
+            if ! grep -q "class ${entry##*.}" "$path" "$alt" 2>/dev/null; then
+              echo "java_init.list entry declares no matching class: $entry"
+              exit 1
+            fi
+            echo "init entry ok: $entry"
+          done < "$META/java_init.list"
+
+          grep -qx 'minApiVersion=102' "$META/module.prop" || { echo "minApiVersion must be 102"; exit 1; }
+          grep -qx 'targetApiVersion=102' "$META/module.prop" || { echo "targetApiVersion must be 102"; exit 1; }
+          grep -qx 'exceptionMode=protective' "$META/module.prop" || { echo "exceptionMode must be protective"; exit 1; }
+          grep -qx 'staticScope=false' "$META/module.prop" || { echo "staticScope must be false"; exit 1; }
+
+          # The packaged APK must carry the same metadata, not just the source tree.
+          APK=$(find app/build/outputs/apk/debug -name '*.apk' | head -1)
+          unzip -l "$APK" | grep -q 'META-INF/xposed/java_init.list' || { echo "APK lacks java_init.list"; exit 1; }
+          unzip -l "$APK" | grep -q 'META-INF/xposed/module.prop' || { echo "APK lacks module.prop"; exit 1; }
+          echo "module metadata audit passed"
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
