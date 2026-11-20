@@ -129,10 +129,12 @@ class RuleEngine(
     }
 
     private fun exposeTarget(rule: HookRule, chain: XposedInterface.Chain, target: String) {
-        val value = when (rule.exposeTarget) {
-            "result" -> null
-            "arg0" -> runCatching { chain.getArg(0) }.getOrNull()
-            else -> chain.getThisObject()
+        val target = rule.exposeTarget
+        val value = if (target.startsWith("arg")) {
+            val index = target.removePrefix("arg").toIntOrNull() ?: -1
+            if (index < 0) null else runCatching { chain.getArg(index) }.getOrNull()
+        } else {
+            chain.getThisObject()
         } ?: return
         onExpose(rule.expose, value)
         log("[expose] " + rule.expose + " <- " + value.javaClass.name)
