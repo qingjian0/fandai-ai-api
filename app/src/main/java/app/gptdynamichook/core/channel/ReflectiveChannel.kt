@@ -59,6 +59,8 @@ object ReflectiveChannel {
             when (command.type) {
                 "list" -> out.put("registered", JSONArray(registry.keys.toList()))
                 "http" -> out.put("result", httpCommand(command))
+                "methods" -> out.put("result", methodList(resolve(command)))
+                "fields" -> out.put("result", fieldList(resolve(command)))
                 "dump" -> out.put("result", dump(resolve(command), command.depth, command.emitValues, 0))
                 "get" -> out.put("result", getPath(resolve(command), command.path, command.emitValues))
                 "set" -> out.put("result", setPath(resolve(command), command.path, command.value))
@@ -71,6 +73,39 @@ object ReflectiveChannel {
         }
         out.put("ops", ops)
         return out
+    }
+
+    /**
+     * Lists the runtime methods of an object or class.
+     *
+     * Static analysis cannot see classes that arrive through a dynamic class
+     * loader, so the only way to learn a method's real signature is to ask the
+     * live process.
+     */
+    private fun methodList(root: Any?): Any {
+        val clazz = if (root is Class<*>) root else root?.javaClass
+            ?: throw IllegalStateException("no_target")
+        val arr = JSONArray()
+        clazz.declaredMethods.take(200).forEach { m ->
+            val params = m.parameterTypes.joinToString(",") { it.name }
+            arr.put(m.name + "(" + params + "):" + m.returnType.name)
+        }
+        return arr
+    }
+
+    /** Lists the runtime fields of an object or class. */
+    private fun fieldList(root: Any?): Any {
+        val clazz = if (root is Class<*>) root else root?.javaClass
+            ?: throw IllegalStateException("no_target")
+        val arr = JSONArray()
+        var c: Class<*>? = clazz
+        while (c != null && c != Any::class.java) {
+            c.declaredFields.take(200).forEach { f ->
+                arr.put(c!!.name + "#" + f.name + ":" + f.type.name)
+            }
+            c = c.superclass
+        }
+        return arr
     }
 
     /**
